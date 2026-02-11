@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from src.api.models.api_schemas import CreateApiKeyRequest
 from src.api.models.response_models import apiResponse
-from src.core.models.db_schemas import APIKey
+from src.core.db.db_schemas import APIKey
 from src.api.dependencies import get_current_user
 import secrets
 

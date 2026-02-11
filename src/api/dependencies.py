@@ -1,6 +1,6 @@
 from fastapi import Security, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from src.core.models.db_schemas import APIKey
+from src.core.db.db_schemas import APIKey
 
 security = HTTPBearer()
 

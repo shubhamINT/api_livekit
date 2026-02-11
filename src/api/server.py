@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from src.api.routes import auth, health, assistant
 from src.core.logger import setup_logging
-from src.core.database import init_db, close_db
+from src.core.db.database import init_db, close_db
 from src.api.models.response_models import apiResponse
 
 # Setup logging
