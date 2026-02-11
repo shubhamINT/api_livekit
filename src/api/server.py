@@ -4,7 +4,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from src.api.routes import auth, health, assistant
-from src.core.logger import setup_logging
+from src.core.logger import setup_logging, logger
 from src.core.db.database import init_db, close_db
 from src.api.models.response_models import apiResponse
 
@@ -29,7 +29,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     import traceback
     error_msg = str(exc)
     # Log detailed error
-    print(f"Validation Error: {error_msg}")
+    logger.error(f"Validation Error: {error_msg}")
     return JSONResponse(
         status_code=422,
         content=apiResponse(
@@ -55,7 +55,7 @@ async def generic_exception_handler(request: Request, exc: Exception):
     import traceback
     error_msg = str(exc)
     trace = traceback.format_exc()
-    print(f"Generic Error: {error_msg}\nTraceback: {trace}")
+    logger.error(f"Generic Error: {error_msg}\nTraceback: {trace}")
     
     return JSONResponse(
         status_code=500,

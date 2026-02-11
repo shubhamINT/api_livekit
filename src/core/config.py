@@ -18,6 +18,14 @@ class Settings:
         self.SMTP_USER = os.getenv("SMTP_USER", "apikey")
         self.SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
         self.FROM_EMAIL = os.getenv("FROM_EMAIL", "noreply@yourdomain.com")
+
         self.FROM_NAME = os.getenv("FROM_NAME", "Your App Name")
+
+        # Logging settings
+        self.LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+        self.LOG_JSON_FORMAT = os.getenv("LOG_JSON_FORMAT", "False").lower() == "true"
+        self.LOG_FILE = os.getenv("LOG_FILE", "app.log")
+        self.LOG_MAX_BYTES = int(os.getenv("LOG_MAX_BYTES", "10485760")) # 10MB
+        self.LOG_BACKUP_COUNT = int(os.getenv("LOG_BACKUP_COUNT", "5"))
 
 settings = Settings()
