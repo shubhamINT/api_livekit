@@ -112,80 +112,52 @@ async def entrypoint(ctx: JobContext):
 
     # --- START SESSION ---
     logger.info("Starting AgentSession...")
-    try:
-        await session.start(agent=agent_instance,room=ctx.room,room_options=room_options,)
-        logger.info("AgentSession started successfully")
+    await session.start(agent=agent_instance, room=ctx.room, room_options=room_options)
+    logger.info("AgentSession started successfully")
 
-        # WAIT for participant
-        logger.info("Waiting for participant...")
-        participant = await ctx.wait_for_participant()
+    # WAIT for participant
+    logger.info("Waiting for participant...")
+    participant = await ctx.wait_for_participant()
 
-        is_sip = participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP
-        logger.info(f"Participant joined: {participant.identity}, kind={participant.kind}, is_sip={is_sip}")
+    is_sip = participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP
+    logger.info(f"Participant joined: {participant.identity}, kind={participant.kind}, is_sip={is_sip}")
 
-        audio_ready = asyncio.Event()
+    audio_ready = asyncio.Event()
 
-        @ctx.room.on("track_published")
-        def on_track_published(publication: rtc.RemoteTrackPublication, p: rtc.RemoteParticipant):
-            if p.identity == participant.identity and publication.kind == rtc.TrackKind.KIND_AUDIO:
-                logger.info("SIP audio track published — call answered")
-                audio_ready.set()
+    @ctx.room.on("track_published")
+    def on_track_published(publication: rtc.RemoteTrackPublication, p: rtc.RemoteParticipant):
+        if p.identity == participant.identity and publication.kind == rtc.TrackKind.KIND_AUDIO:
+            logger.info("SIP audio track published — call answered")
+            audio_ready.set()
 
-        # --- Background Audio Start ---
-        if background_audio:
-            try:
-                asyncio.create_task(background_audio.start(room=ctx.room, agent_session=session))
-                logger.info("Background audio task spawned")
-            except Exception as e:
-                logger.error(f"Failed to start background audio: {e}")
-
-        @ctx.room.on("data_received")
-        def on_data_received(data: rtc.DataPacket):
-            if data.topic == "lk.transcription":
-                pass # Ignore transcription logs
-
-        # --- INITIATING SPEECH ---
-        if is_sip:
-            logger.info("Waiting for SIP call to be answered...")
-            await audio_ready.wait()
-            # Buffer for RTP stabilization
-            await asyncio.sleep(2.0)
-
-        # --- Start Instruction ---
-        start_instruction = agent_instance.start_instruction
-        if start_instruction:
-            try:
-                await session.generate_reply(instructions=start_instruction)
-                logger.info("Start instruction sent successfully")
-            except Exception as e:
-                logger.error(f"Failed to send start instruction: {e}", exc_info=True)
-
-        # --- KEEP ALIVE LOOP ---
-        participant_left = asyncio.Event()
-
-        @ctx.room.on("participant_disconnected")
-        def on_participant_disconnected(p: rtc.RemoteParticipant):
-            if p.identity == participant.identity:
-                logger.info(f"Participant {p.identity} disconnected, ending session.")
-                participant_left.set()
-
-        # Keep the task running until the participant leaves or the room is closed
+    # --- Background Audio Start ---
+    if background_audio:
         try:
-            while (
-                ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED 
-                and not participant_left.is_set()
-            ):
-                await asyncio.sleep(1)
-        except asyncio.CancelledError:
-            logger.info("Keep-alive loop cancelled")
-        logger.info("Session ended.")
-    finally:
-        # --- PROPER CLEANUP ---
-        logger.info("Cleaning up resources...")
-        await session.aclose()
-        await llm.aclose()
-        await tts.aclose()
-        logger.info("Cleanup complete")
+            asyncio.create_task(background_audio.start(room=ctx.room, agent_session=session))
+            logger.info("Background audio task spawned")
+        except Exception as e:
+            logger.error(f"Failed to start background audio: {e}")
+
+    @ctx.room.on("data_received")
+    def on_data_received(data: rtc.DataPacket):
+        if data.topic == "lk.transcription":
+            pass # Ignore transcription logs
+
+    # --- INITIATING SPEECH ---
+    if is_sip:
+        logger.info("Waiting for SIP call to be answered...")
+        await audio_ready.wait()
+        # Buffer for RTP stabilization
+        await asyncio.sleep(2.0)
+
+    # --- Start Instruction ---
+    start_instruction = agent_instance.start_instruction
+    if start_instruction:
+        try:
+            await session.generate_reply(instructions=start_instruction)
+            logger.info("Start instruction sent successfully")
+        except Exception as e:
+            logger.error(f"Failed to send start instruction: {e}", exc_info=True)
 
 
 if __name__ == "__main__":
