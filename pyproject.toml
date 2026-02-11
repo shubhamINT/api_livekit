@@ -11,5 +11,5 @@ dependencies = [
     "motor>=3.3.2",
     "python-dotenv>=1.0.0",
     "livekit-agents[cartesia,openai,turn-detector]~=1.3",
-
+    "boto3>=1.34.0",
 ]

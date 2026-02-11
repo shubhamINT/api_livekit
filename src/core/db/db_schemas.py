@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional, Literal, Text
+from typing import Optional, Literal, Text, List, Dict
 from beanie import Document, Indexed
 from pydantic import Field, EmailStr
 
@@ -50,3 +50,18 @@ class OutboundSIP(Document):
     
     class Settings:
         name = "outbound_sip"  # Collection name in MongoDB
+
+
+class CallRecord(Document):
+    room_name: Indexed(str, unique=True)
+    assistant_id: str
+    assistant_name: str
+    to_number: str
+    recording_path: Optional[str] = None
+    transcripts: List[Dict] = []  # [{speaker, text, timestamp}]
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    ended_at: Optional[datetime] = None
+    call_duration_minutes: Optional[float] = None
+    
+    class Settings:
+        name = "call_records"

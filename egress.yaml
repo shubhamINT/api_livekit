@@ -1,0 +1,24 @@
+# egress.yaml - LiveKit Egress Service Configuration
+# This configures the Egress service for self-hosted LiveKit
+
+log_level: debug
+
+# LiveKit server connection settings
+api_key: devkey
+api_secret: secret
+ws_url: ws://livekit:7880
+insecure: true
+
+# Redis configuration (must match your LiveKit server redis)
+redis:
+  address: redis:6379
+
+# Output directory inside the container
+# This is mapped to ./output-recordings on the host via docker-compose
+# Recordings will be saved to /out/ in the container
+
+# Additional Egress options
+# room_only: false  # Set to true to only process room composite requests
+# web_only: false   # Set to true to only process web egress requests
+# track_composite_only: false
+# track_only: false

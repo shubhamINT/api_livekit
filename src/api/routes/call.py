@@ -28,10 +28,10 @@ async def trigger_outbound_call(request: TriggerOutboundCall ,current_user: APIK
     if not assistant:
         raise HTTPException(status_code=404, detail="Assistant not found in DB")
 
-    # Check of the trunk exists for the user
-    trunk = await OutboundSIP.find_one(OutboundSIP.trunk_id == request.trunk_id, OutboundSIP.trunk_created_by_email == current_user.user_email)
-    if not trunk:
-        raise HTTPException(status_code=404, detail="Trunk not found in DB")
+    # # Check of the trunk exists for the user
+    # trunk = await OutboundSIP.find_one(OutboundSIP.trunk_id == request.trunk_id, OutboundSIP.trunk_created_by_email == current_user.user_email)
+    # if not trunk:
+    #     raise HTTPException(status_code=404, detail="Trunk not found in DB")
 
     # Create room
     room_name = await livekit_services.create_room(request.assistant_id)
@@ -43,7 +43,7 @@ async def trigger_outbound_call(request: TriggerOutboundCall ,current_user: APIK
     participant = await livekit_services.create_sip_participant(
         room_name = room_name,
         to_number = request.to_number,
-        trunk_id = trunk.trunk_id,
+        trunk_id = request.trunk_id,
         participant_identity = uuid.uuid4().hex,
         participant_metadata = json.dumps(request.metadata)
     )

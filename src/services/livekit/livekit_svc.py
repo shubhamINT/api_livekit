@@ -1,27 +1,26 @@
 import uuid
 import json
 from contextlib import asynccontextmanager
-from typing import List, Optional
-from livekit.api import (
-    LiveKitAPI,
-    CreateRoomRequest,
-    CreateAgentDispatchRequest,
-    CreateSIPParticipantRequest,
-    ListRoomsRequest
-)
+from typing import List, Optional, Dict
+from datetime import datetime
+from livekit import api
+from livekit.api import LiveKitAPI
 from livekit.protocol.sip import (
     CreateSIPOutboundTrunkRequest,
     SIPOutboundTrunkInfo,
-    ListSIPOutboundTrunkRequest
+    ListSIPOutboundTrunkRequest,
 )
-from livekit import api as lk_api
 from src.core.config import settings
+from src.core.logger import logger
+from src.core.db.db_schemas import CallRecord
+
 
 class LiveKitService:
     def __init__(self):
         self.api_key = settings.LIVEKIT_API_KEY
         self.api_secret = settings.LIVEKIT_API_SECRET
         self.url = settings.LIVEKIT_URL
+        self.transcripts: List[Dict] = []
 
     @asynccontextmanager
     async def get_livekit_api(self):
@@ -38,26 +37,24 @@ class LiveKitService:
         finally:
             await lkapi.aclose()
 
-
-    # Create livekit room 
+    # Create livekit room
     async def create_room(self, assistant_id: str) -> str:
         async with self.get_livekit_api() as lkapi:
-            
             # Create a unique room name with agent name
             unique_room_name = f"{assistant_id}_{uuid.uuid4().hex[:8]}"
 
             # Create room
-            room = await lkapi.room.create_room(CreateRoomRequest(name=unique_room_name))
+            room = await lkapi.room.create_room(
+                api.CreateRoomRequest(name=unique_room_name)
+            )
             return room.name
-            
-    
+
     # Create agent dispatch
-    async def create_agent_dispatch(self, room_name: str) -> str:
+    async def create_agent_dispatch(self, room_name: str):
         async with self.get_livekit_api() as lkapi:
-            
             # Create agent dispatch
             agent_dispatch = await lkapi.agent_dispatch.create_dispatch(
-                CreateAgentDispatchRequest(
+                api.CreateAgentDispatchRequest(
                     room=room_name,
                     agent_name="api-agent",
                 )
@@ -71,35 +68,117 @@ class LiveKitService:
         trunk_address: str,
         trunk_numbers: list,
         trunk_auth_username: str,
-        trunk_auth_password: str
+        trunk_auth_password: str,
     ):
-        
         async with self.get_livekit_api() as lkapi:
             trunk_info = SIPOutboundTrunkInfo(
                 name=trunk_name,
                 address=trunk_address,
                 numbers=trunk_numbers,
                 auth_username=trunk_auth_username,
-                auth_password=trunk_auth_password
+                auth_password=trunk_auth_password,
             )
-            
+
             request = CreateSIPOutboundTrunkRequest(trunk=trunk_info)
             trunk = await lkapi.sip.create_sip_outbound_trunk(request)
-            
+
         return trunk
-        
 
     # Create SIP participant
-    async def create_sip_participant(self, room_name: str, to_number: str, trunk_id: str, participant_identity:str ,participant_metadata: dict):
+    async def create_sip_participant(
+        self,
+        room_name: str,
+        to_number: str,
+        trunk_id: str,
+        participant_identity: str,
+        participant_metadata: dict,
+    ):
         async with self.get_livekit_api() as lkapi:
             participant = await lkapi.sip.create_sip_participant(
-                CreateSIPParticipantRequest(
+                api.CreateSIPParticipantRequest(
                     room_name=room_name,
                     sip_trunk_id=trunk_id,
                     sip_call_to=to_number,
                     participant_identity=participant_identity,
-                    participant_metadata=participant_metadata,
-                    krisp_enabled=True
+                    participant_metadata=json.dumps(participant_metadata)
+                    if isinstance(participant_metadata, dict)
+                    else participant_metadata,
+                    krisp_enabled=True,
                 )
             )
             return participant
+
+    # Add transcript
+    async def add_transcript(
+        self,
+        room_name: str,
+        speaker: str,
+        text: str,
+        assistant_id: str,
+    ):
+        # If room name present in call_records collection, update it
+        call_record = await CallRecord.find_one(
+            CallRecord.room_name == room_name
+        )
+        if call_record:
+            call_record.transcripts.append({
+                "speaker": speaker,
+                "text": text,
+                "timestamp": datetime.utcnow(),
+            })
+            await call_record.save()
+        else:
+            # Create new call record
+            call_record = CallRecord(
+                room_name=room_name,
+                assistant_id=assistant_id,
+                transcripts=[
+                    {
+                        "speaker": speaker,
+                        "text": text,
+                        "timestamp": datetime.utcnow(),
+                    }
+                ],
+                started_at=datetime.utcnow(),
+            )
+            await call_record.insert()
+
+    async def end_call(self, room_name: str):
+        """Update the call record with the end time"""
+        call_record = await CallRecord.find_one(
+            CallRecord.room_name == room_name
+        )
+        if call_record:
+            call_record.ended_at = datetime.utcnow()
+            # Call clculate the call duration
+            call_record.call_duration_minutes = (call_record.ended_at - call_record.started_at).total_seconds() / 60
+            await call_record.save()
+            logger.info(f"Call record ended for room: {room_name}")
+
+    async def start_room_recording(self, room_name: str) -> Optional[str]:
+        """Start recording the room using LiveKit Egress"""
+        try:
+            async with self.get_livekit_api() as lkapi:
+                timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+                filename = f"{room_name}_{timestamp}.ogg"
+
+                file_output = api.EncodedFileOutput(
+                    file_type=api.EncodedFileType.OGG,
+                    filepath=f"/out/{filename}",  # Path inside container which is mapped to ./output-recordings/ on host
+                )
+
+                # Start room composite recording (records all participants)
+                egress_info = await lkapi.egress.start_room_composite_egress(
+                    api.RoomCompositeEgressRequest(
+                        room_name=room_name,
+                        file_outputs=[file_output],
+                        audio_only=True,
+                    )
+                )
+
+                logger.info(f"Recording started: {egress_info.egress_id}")
+                return egress_info.egress_id
+
+        except Exception as e:
+            logger.error(f"Failed to start recording: {e}", exc_info=True)
+            return None

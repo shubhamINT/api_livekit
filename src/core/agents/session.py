@@ -18,10 +18,12 @@ import asyncio
 from typing import cast, Optional
 
 from src.core.config import settings
-from src.core.logger import logger,setup_logging
+from src.core.logger import logger, setup_logging
 from src.core.agents.dynamic_assistant import DynamicAssistant
 from src.core.db.database import Database
 from src.core.db.db_schemas import Assistant
+from src.services.livekit.livekit_svc import LiveKitService
+from src.services.storage.s3_service import S3Service
 
 
 setup_logging()
@@ -40,8 +42,10 @@ async def entrypoint(ctx: JobContext):
     # Retrieve agent ID from room name
     # Assumption: room name format is "{assistant_id}-{unique_suffix}" or just "{assistant_id}"
     room_name = ctx.room.name
-    assistant_id = room_name.split("_",1)[0]
-    logger.info(f"Agent session starting | room: {room_name} | identifier: {assistant_id}")
+    assistant_id = room_name.split("_", 1)[0]
+    logger.info(
+        f"Agent session starting | room: {room_name} | identifier: {assistant_id}"
+    )
 
     # Fetch assistant from DB
     assistant = await Assistant.find_one(Assistant.assistant_id == assistant_id)
@@ -50,20 +54,26 @@ async def entrypoint(ctx: JobContext):
         logger.error(f"No assistant found for identifier: {assistant_id}")
         return
 
-    logger.info(f"Loaded assistant config: {assistant.assistant_name} (ID: {assistant.assistant_id})")
+    logger.info(
+        f"Loaded assistant config: {assistant.assistant_name} (ID: {assistant.assistant_id})"
+    )
+
+    # Initialize Services per session
+    livekit_services = LiveKitService()
 
     # Initialize Agent Instance
     agent_instance = DynamicAssistant(
         room=ctx.room,
         instructions=assistant.assistant_prompt,
-        start_instruction=assistant.assistant_start_instruction or "Greet the user Professionally"
+        start_instruction=assistant.assistant_start_instruction
+        or "Greet the user Professionally",
     )
-    
+
     llm = realtime.RealtimeModel(
         model="gpt-realtime",
         input_audio_transcription=AudioTranscription(
             model="gpt-4o-mini-transcribe",
-             prompt=(
+            prompt=(
                 "The speaker is multilingual and switches between different languages dynamically. "
                 "Transcribe exactly what is spoken without translating."
             ),
@@ -110,6 +120,20 @@ async def entrypoint(ctx: JobContext):
         delete_room_on_close=True,
     )
 
+    # --- TRANSCRIPTION EVENT HANDLERS ---
+    @session.on("conversation_item_added")
+    def on_conversation_item(event):
+        if event.item.text_content:
+            asyncio.create_task(
+                livekit_services.add_transcript(
+                    room_name=ctx.room.name,
+                    speaker=event.item.role,
+                    text=event.item.text_content,
+                    assistant_id=assistant_id,
+                    assistant_name=assistant.assistant_name,
+                )
+            )
+
     # --- START SESSION ---
     logger.info("Starting AgentSession...")
     await session.start(agent=agent_instance, room=ctx.room, room_options=room_options)
@@ -122,14 +146,6 @@ async def entrypoint(ctx: JobContext):
     is_sip = participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP
     logger.info(f"Participant joined: {participant.identity}, kind={participant.kind}, is_sip={is_sip}")
 
-    audio_ready = asyncio.Event()
-
-    @ctx.room.on("track_published")
-    def on_track_published(publication: rtc.RemoteTrackPublication, p: rtc.RemoteParticipant):
-        if p.identity == participant.identity and publication.kind == rtc.TrackKind.KIND_AUDIO:
-            logger.info("SIP audio track published — call answered")
-            audio_ready.set()
-
     # --- Background Audio Start ---
     if background_audio:
         try:
@@ -137,18 +153,6 @@ async def entrypoint(ctx: JobContext):
             logger.info("Background audio task spawned")
         except Exception as e:
             logger.error(f"Failed to start background audio: {e}")
-
-    @ctx.room.on("data_received")
-    def on_data_received(data: rtc.DataPacket):
-        if data.topic == "lk.transcription":
-            pass # Ignore transcription logs
-
-    # --- INITIATING SPEECH ---
-    if is_sip:
-        logger.info("Waiting for SIP call to be answered...")
-        await audio_ready.wait()
-        # Buffer for RTP stabilization
-        await asyncio.sleep(2.0)
 
     # --- Start Instruction ---
     start_instruction = agent_instance.start_instruction
@@ -158,6 +162,14 @@ async def entrypoint(ctx: JobContext):
             logger.info("Start instruction sent successfully")
         except Exception as e:
             logger.error(f"Failed to send start instruction: {e}", exc_info=True)
+
+    # --- WAIT FOR DISCONNECT ---
+    @ctx.room.on("participant_disconnected")
+    def on_participant_disconnected(participant):
+        logger.info(f"Participant disconnected: {participant.identity}")
+        # Calculate end time and update record
+        asyncio.create_task(livekit_services.end_call(room_name=ctx.room.name))
+        logger.info(f"Agent session ended for room: {ctx.room.name}")
 
 
 if __name__ == "__main__":
