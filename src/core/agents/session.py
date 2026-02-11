@@ -21,6 +21,7 @@ from typing import cast, Optional
 from src.core.config import settings
 from src.core.logger import logger, setup_logging
 from src.core.agents.dynamic_assistant import DynamicAssistant
+from src.core.agents.utils import render_prompt
 from src.core.db.database import Database
 from src.core.db.db_schemas import Assistant
 from src.services.livekit.livekit_svc import LiveKitService
@@ -47,6 +48,15 @@ async def entrypoint(ctx: JobContext):
 
     logger.info(f"Agent session starting | room: {room_name} | identifier: {assistant_id}")
 
+    # Fetch assistant from DB
+    assistant = await Assistant.find_one(Assistant.assistant_id == assistant_id)
+
+    if not assistant:
+        logger.error(f"No assistant found for identifier: {assistant_id}")
+        return
+
+    logger.info(f"Loaded assistant config: {assistant.assistant_name} (ID: {assistant.assistant_id})")
+
     # Extract metadata from job metadata (reliable way to pass data to agent)
     to_number = "Unknown"
     job_metadata = {}
@@ -56,20 +66,17 @@ async def entrypoint(ctx: JobContext):
             to_number = job_metadata.get("to_number", "Unknown")
             logger.info(f"Extracted to_number from job metadata: {to_number}")
             
-            # Update Assistant Prompt with metadata
-            assistant.assistant_prompt = assistant.assistant_prompt.format(**job_metadata)
+            # Update Assistant Prompt and Start Instruction with metadata placeholders {{key}}
+            if assistant.assistant_prompt:
+                assistant.assistant_prompt = render_prompt(assistant.assistant_prompt, job_metadata)
+            
+            if assistant.assistant_start_instruction:
+                assistant.assistant_start_instruction = render_prompt(assistant.assistant_start_instruction, job_metadata)
+            
+            logger.info("Successfully processed metadata placeholders in assistant instructions")
 
         except Exception as e:
-            logger.warning(f"Failed to parse job metadata: {e}")
-
-    # Fetch assistant from DB
-    assistant = await Assistant.find_one(Assistant.assistant_id == assistant_id)
-
-    if not assistant:
-        logger.error(f"No assistant found for identifier: {assistant_id}")
-        return
-
-    logger.info(f"Loaded assistant config: {assistant.assistant_name} (ID: {assistant.assistant_id})")
+            logger.warning(f"Failed to parse job metadata or process placeholders: {e}")
 
     # Initialize Services per session
     livekit_services = LiveKitService()
