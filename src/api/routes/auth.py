@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
-from src.api.models.api_schemas import CreateApiKeyRequest
+from src.api.models.api_schemas import CreateApiKey
 from src.api.models.response_models import apiResponse
 from src.core.db.db_schemas import APIKey
 from src.api.dependencies import get_current_user
@@ -11,7 +11,7 @@ setup_logging()
 
 # Create api key
 @router.post("/create-key")
-async def create_api_key(request: CreateApiKeyRequest):
+async def create_api_key(request: CreateApiKey):
     logger.info(f"Received request to create API key")
     # check if user already exists
     existing_user = await APIKey.find_one(APIKey.user_email == request.user_email)

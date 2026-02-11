@@ -18,7 +18,6 @@ class Settings:
         self.SMTP_USER = os.getenv("SMTP_USER", "apikey")
         self.SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
         self.FROM_EMAIL = os.getenv("FROM_EMAIL", "noreply@yourdomain.com")
-
         self.FROM_NAME = os.getenv("FROM_NAME", "Your App Name")
 
         # Logging settings
@@ -27,5 +26,21 @@ class Settings:
         self.LOG_FILE = os.getenv("LOG_FILE", "app.log")
         self.LOG_MAX_BYTES = int(os.getenv("LOG_MAX_BYTES", "10485760")) # 10MB
         self.LOG_BACKUP_COUNT = int(os.getenv("LOG_BACKUP_COUNT", "5"))
+
+        # LiveKit settings
+        self.LIVEKIT_URL = os.getenv("LIVEKIT_URL", "ws://127.0.0.1:7880")
+        self.LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY", "devkey")
+        self.LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET", "secret")
+
+        # OpenAI settings
+        self.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+
+        # Cartesia settings
+        self.CARTESIA_API_KEY = os.getenv("CARTESIA_API_KEY", "")
+
+        # Audio Paths
+        self.BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        self.ASSETS_DIR = os.path.join(self.BASE_DIR, "assets")
+        self.AUDIO_DIR = os.path.join(self.ASSETS_DIR, "audio")
 
 settings = Settings()

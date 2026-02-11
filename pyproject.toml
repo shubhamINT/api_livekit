@@ -10,4 +10,6 @@ dependencies = [
     "beanie>=1.26.0",
     "motor>=3.3.2",
     "python-dotenv>=1.0.0",
+    "livekit-agents[cartesia,openai,turn-detector]~=1.3",
+
 ]

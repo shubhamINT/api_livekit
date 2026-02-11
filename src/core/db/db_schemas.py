@@ -31,7 +31,23 @@ class Assistant(Document):
     assistant_welcome_message: Optional[str] = None
     assistant_created_at: datetime = Field(default_factory=datetime.utcnow)
     assistant_updated_at: datetime = Field(default_factory=datetime.utcnow)
+    assistant_created_by_email: EmailStr
+    assistant_updated_by_email: EmailStr
     assistant_is_active: bool = True
     
     class Settings:
         name = "assistants"  # Collection name in MongoDB
+
+
+class OutboundSIP(Document):
+    """Outbound SIP trunk model for Beanie ODM"""
+    trunk_id: Indexed(str, unique=True)
+    trunk_name: str
+    trunk_created_by_email: EmailStr
+    trunk_updated_by_email: EmailStr
+    trunk_created_at: datetime = Field(default_factory=datetime.utcnow)
+    trunk_updated_at: datetime = Field(default_factory=datetime.utcnow)
+    trunk_is_active: bool = True
+    
+    class Settings:
+        name = "outbound_sip"  # Collection name in MongoDB

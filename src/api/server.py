@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from src.api.routes import auth, health, assistant
+from src.api.routes import auth, health, assistant, sip
 from src.core.logger import setup_logging, logger
 from src.core.db.database import init_db, close_db
 from src.api.models.response_models import apiResponse
@@ -78,6 +78,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 app.include_router(health.router, tags=["Health"])
 app.include_router(assistant.router, prefix="/assistant", tags=["Assistant"])
+app.include_router(sip.router, prefix="/sip", tags=["Outbound SIP"])
 
 if __name__ == "__main__":
     import uvicorn
