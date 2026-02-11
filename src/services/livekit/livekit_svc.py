@@ -11,8 +11,10 @@ from livekit.protocol.sip import (
     ListSIPOutboundTrunkRequest,
 )
 from src.core.config import settings
-from src.core.logger import logger
+from src.core.logger import logger, setup_logging
 from src.core.db.db_schemas import CallRecord
+
+setup_logging()
 
 
 class LiveKitService:
@@ -50,13 +52,14 @@ class LiveKitService:
             return room.name
 
     # Create agent dispatch
-    async def create_agent_dispatch(self, room_name: str):
+    async def create_agent_dispatch(self, room_name: str, metadata: dict = None):
         async with self.get_livekit_api() as lkapi:
-            # Create agent dispatch
+            # Create agent dispatch with metadata
             agent_dispatch = await lkapi.agent_dispatch.create_dispatch(
                 api.CreateAgentDispatchRequest(
                     room=room_name,
                     agent_name="api-agent",
+                    metadata=json.dumps(metadata) if metadata else "",
                 )
             )
             return agent_dispatch
@@ -91,7 +94,6 @@ class LiveKitService:
         to_number: str,
         trunk_id: str,
         participant_identity: str,
-        participant_metadata: dict,
     ):
         async with self.get_livekit_api() as lkapi:
             participant = await lkapi.sip.create_sip_participant(
@@ -100,9 +102,6 @@ class LiveKitService:
                     sip_trunk_id=trunk_id,
                     sip_call_to=to_number,
                     participant_identity=participant_identity,
-                    participant_metadata=json.dumps(participant_metadata)
-                    if isinstance(participant_metadata, dict)
-                    else participant_metadata,
                     krisp_enabled=True,
                 )
             )
@@ -115,23 +114,27 @@ class LiveKitService:
         speaker: str,
         text: str,
         assistant_id: str,
+        assistant_name: str,
+        to_number: str,
     ):
         # If room name present in call_records collection, update it
-        call_record = await CallRecord.find_one(
-            CallRecord.room_name == room_name
-        )
+        call_record = await CallRecord.find_one(CallRecord.room_name == room_name)
         if call_record:
-            call_record.transcripts.append({
-                "speaker": speaker,
-                "text": text,
-                "timestamp": datetime.utcnow(),
-            })
+            call_record.transcripts.append(
+                {
+                    "speaker": speaker,
+                    "text": text,
+                    "timestamp": datetime.utcnow(),
+                }
+            )
             await call_record.save()
         else:
             # Create new call record
             call_record = CallRecord(
                 room_name=room_name,
                 assistant_id=assistant_id,
+                assistant_name=assistant_name,
+                to_number=to_number,
                 transcripts=[
                     {
                         "speaker": speaker,
@@ -145,13 +148,13 @@ class LiveKitService:
 
     async def end_call(self, room_name: str):
         """Update the call record with the end time"""
-        call_record = await CallRecord.find_one(
-            CallRecord.room_name == room_name
-        )
+        call_record = await CallRecord.find_one(CallRecord.room_name == room_name)
         if call_record:
             call_record.ended_at = datetime.utcnow()
             # Call clculate the call duration
-            call_record.call_duration_minutes = (call_record.ended_at - call_record.started_at).total_seconds() / 60
+            call_record.call_duration_minutes = (
+                call_record.ended_at - call_record.started_at
+            ).total_seconds() / 60
             await call_record.save()
             logger.info(f"Call record ended for room: {room_name}")
 

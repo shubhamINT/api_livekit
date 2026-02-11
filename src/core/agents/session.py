@@ -15,6 +15,7 @@ from livekit.plugins.openai import realtime
 from openai.types.realtime import AudioTranscription
 import os
 import asyncio
+import json
 from typing import cast, Optional
 
 from src.core.config import settings
@@ -43,9 +44,23 @@ async def entrypoint(ctx: JobContext):
     # Assumption: room name format is "{assistant_id}-{unique_suffix}" or just "{assistant_id}"
     room_name = ctx.room.name
     assistant_id = room_name.split("_", 1)[0]
-    logger.info(
-        f"Agent session starting | room: {room_name} | identifier: {assistant_id}"
-    )
+
+    logger.info(f"Agent session starting | room: {room_name} | identifier: {assistant_id}")
+
+    # Extract metadata from job metadata (reliable way to pass data to agent)
+    to_number = "Unknown"
+    job_metadata = {}
+    if ctx.job.metadata:
+        try:
+            job_metadata = json.loads(ctx.job.metadata)
+            to_number = job_metadata.get("to_number", "Unknown")
+            logger.info(f"Extracted to_number from job metadata: {to_number}")
+            
+            # Update Assistant Prompt with metadata
+            assistant.assistant_prompt = assistant.assistant_prompt.format(**job_metadata)
+
+        except Exception as e:
+            logger.warning(f"Failed to parse job metadata: {e}")
 
     # Fetch assistant from DB
     assistant = await Assistant.find_one(Assistant.assistant_id == assistant_id)
@@ -54,9 +69,7 @@ async def entrypoint(ctx: JobContext):
         logger.error(f"No assistant found for identifier: {assistant_id}")
         return
 
-    logger.info(
-        f"Loaded assistant config: {assistant.assistant_name} (ID: {assistant.assistant_id})"
-    )
+    logger.info(f"Loaded assistant config: {assistant.assistant_name} (ID: {assistant.assistant_id})")
 
     # Initialize Services per session
     livekit_services = LiveKitService()
@@ -124,6 +137,7 @@ async def entrypoint(ctx: JobContext):
     @session.on("conversation_item_added")
     def on_conversation_item(event):
         if event.item.text_content:
+            # Use to_number from job metadata
             asyncio.create_task(
                 livekit_services.add_transcript(
                     room_name=ctx.room.name,
@@ -131,6 +145,7 @@ async def entrypoint(ctx: JobContext):
                     text=event.item.text_content,
                     assistant_id=assistant_id,
                     assistant_name=assistant.assistant_name,
+                    to_number=to_number,
                 )
             )
 
@@ -149,7 +164,9 @@ async def entrypoint(ctx: JobContext):
     # --- Background Audio Start ---
     if background_audio:
         try:
-            asyncio.create_task(background_audio.start(room=ctx.room, agent_session=session))
+            asyncio.create_task(
+                background_audio.start(room=ctx.room, agent_session=session)
+            )
             logger.info("Background audio task spawned")
         except Exception as e:
             logger.error(f"Failed to start background audio: {e}")
