@@ -169,9 +169,24 @@ class LiveKitService:
         
         if assistant and call_record:
             end_call_url = assistant.assistant_end_call_url
-            # Serialize the Call record safely (handles ObjectId, datetime)
-            payload = json.loads(call_record.model_dump_json())
-            print(payload)
+            
+            # Serialize the Call record and format the data
+            full_data = json.loads(call_record.model_dump_json())
+            
+            # Filter the data to include only requested fields
+            # Exclude: id
+            filtered_data = {
+                key: value
+                for key, value in full_data.items()
+                if key not in ["id"]
+            }
+            
+            payload = {
+                "success": True,
+                "message": "Call details fetched successfully",
+                "data": filtered_data
+            }
+            
             # Send the Call record to the end call url
             try:
                 async with httpx.AsyncClient() as client:
