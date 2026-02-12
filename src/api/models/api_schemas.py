@@ -4,8 +4,8 @@ from typing import Optional, Literal, Union, Annotated, List
 
 # Model for creating API key
 class CreateApiKey(BaseModel):
-    user_name: str = Field(..., min_length=1, max_length=50, description="User's name (cannot be empty)")
-    org_name: Optional[str] = Field(None, max_length=50, description="Organization name (optional)")
+    user_name: str = Field(..., min_length=1, max_length=100, description="User's name (cannot be empty)")
+    org_name: Optional[str] = Field(None, max_length=100, description="Organization name (optional)")
     user_email: EmailStr = Field(..., description="User's email address (cannot be empty)")
     
     class Config:
@@ -23,7 +23,7 @@ class CreateApiKey(BaseModel):
 
 # For Assistant creation
 class CreateAssistant(BaseModel):
-    assistant_name: str = Field(..., min_length=1, max_length=50, description="Assistant's name (cannot be empty)")
+    assistant_name: str = Field(..., min_length=1, max_length=100, description="Assistant's name (cannot be empty)")
     assistant_description: str = Field(..., description="Assistant's description (optional)")
     assistant_prompt: str = Field(..., description="Assistant's prompt (cannot be empty)")
     assistant_tts_model: Literal["cartesia", "elevenlabs"] = Field(..., description="TTS Provider")
@@ -50,7 +50,7 @@ class CreateAssistant(BaseModel):
 
 # For Assistant update
 class UpdateAssistant(BaseModel):
-    assistant_name: Optional[str] = Field(None, min_length=1, max_length=50, description="Assistant's name (optional)")
+    assistant_name: Optional[str] = Field(None, min_length=1, max_length=100, description="Assistant's name (optional)")
     assistant_description: Optional[str] = Field(None, description="Assistant's description (optional)")
     assistant_prompt: Optional[str] = Field(None, description="Assistant's prompt (optional)")
     assistant_tts_model: Optional[Literal["cartesia", "elevenlabs"]] = Field(None, description="TTS Provider (optional)")
@@ -73,11 +73,11 @@ class UpdateAssistant(BaseModel):
 
 # For Outbound Trunk creation
 class CreateOutboundTrunk(BaseModel):
-    trunk_name: str = Field(..., min_length=1, max_length=50, description="Trunk name (cannot be empty)")
-    trunk_address: str = Field(..., min_length=1, max_length=50, description="Trunk address (cannot be empty)")
+    trunk_name: str = Field(..., min_length=1, max_length=100, description="Trunk name (cannot be empty)")
+    trunk_address: str = Field(..., min_length=1, max_length=100, description="Trunk address (cannot be empty)")
     trunk_numbers: List[str] = Field(..., description="Trunk numbers (cannot be empty)")
-    trunk_auth_username: str = Field(..., min_length=1, max_length=50, description="Trunk auth username (cannot be empty)")
-    trunk_auth_password: str = Field(..., min_length=1, max_length=50, description="Trunk auth password (cannot be empty)")
+    trunk_auth_username: str = Field(..., min_length=1, max_length=100, description="Trunk auth username (cannot be empty)")
+    trunk_auth_password: str = Field(..., min_length=1, max_length=100, description="Trunk auth password (cannot be empty)")
     trunk_type: Literal["exotel", "twilio"] = Field(..., description="Trunk type (cannot be empty) Currently present only from twilio")
 
     class Config:
@@ -98,9 +98,9 @@ class CreateOutboundTrunk(BaseModel):
 
 # Triggure Outbound call
 class TriggerOutboundCall(BaseModel):
-    assistant_id: str = Field(..., min_length=1, max_length=50, description="Assistant ID (cannot be empty)")
-    trunk_id: str = Field(..., min_length=1, max_length=50, description="Trunk ID (cannot be empty)")
-    to_number: str = Field(..., min_length=1, max_length=50, description="To Number (cannot be empty)")
+    assistant_id: str = Field(..., min_length=1, max_length=100, description="Assistant ID (cannot be empty)")
+    trunk_id: str = Field(..., min_length=1, max_length=100, description="Trunk ID (cannot be empty)")
+    to_number: str = Field(..., min_length=1, max_length=100, description="To Number (cannot be empty)")
     call_service: Literal["twilio", "exotel"] = Field(..., description="Call service (cannot be empty) Currently present only from twilio")
     metadata: dict = Field(..., description="Metadata (cannot be empty)")
 
