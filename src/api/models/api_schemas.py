@@ -48,6 +48,29 @@ class CreateAssistant(BaseModel):
         }
 
 
+# For Assistant update
+class UpdateAssistant(BaseModel):
+    assistant_name: Optional[str] = Field(None, min_length=1, max_length=50, description="Assistant's name (optional)")
+    assistant_description: Optional[str] = Field(None, description="Assistant's description (optional)")
+    assistant_prompt: Optional[str] = Field(None, description="Assistant's prompt (optional)")
+    assistant_tts_model: Optional[Literal["cartesia", "elevenlabs"]] = Field(None, description="TTS Provider (optional)")
+    assistant_tts_voice_id: Optional[str] = Field(None, min_length=1, max_length=100, description="TTS Voice ID (optional)")
+    assistant_start_instruction: Optional[str] = Field(None, max_length=200, description="Assistant's start instruction (optional)")
+    assistant_end_call_url: Optional[str] = Field(None, max_length=200, description="Assistant's end call url (optional)")
+    
+    class Config:
+        # Strip whitespace from string fields
+        str_strip_whitespace = True
+        # Example for API documentation
+        json_schema_extra = {
+            "example": {
+                "assistant_name": "Updated Assistant Name",
+                "assistant_prompt": "You are an updated assistant.",
+                "assistant_tts_voice_id": "New Voice ID"
+            }
+        }
+
+
 # For Outbound Trunk creation
 class CreateOutboundTrunk(BaseModel):
     trunk_name: str = Field(..., min_length=1, max_length=50, description="Trunk name (cannot be empty)")

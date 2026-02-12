@@ -136,6 +136,18 @@ Create a new AI assistant configuration.
 
 *Note: `{{key}}` placeholders in `assistant_prompt` and `assistant_start_instruction` are dynamically replaced with values from the `metadata` passed during outbound calls.*
 
+### Update Assistant
+
+**PATCH** `/assistant/update/{assistant_id}`
+Update an existing assistant's configuration. Only provide the fields you want to update.
+
+```json
+{
+  "assistant_name": "Updated Name",
+  "assistant_prompt": "You are an updated assistant."
+}
+```
+
 ### SIP Trunks
 
 **POST** `/sip/create-outbound-trunk`
