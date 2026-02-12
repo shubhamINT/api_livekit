@@ -117,6 +117,7 @@ class LiveKitService:
         assistant_id: str,
         assistant_name: str,
         to_number: str,
+        recording_path: str,
     ):
         # If room name present in call_records collection, update it
         call_record = await CallRecord.find_one(CallRecord.room_name == room_name)
@@ -136,6 +137,7 @@ class LiveKitService:
                 assistant_id=assistant_id,
                 assistant_name=assistant_name,
                 to_number=to_number,
+                recording_path=recording_path,
                 transcripts=[
                     {
                         "speaker": speaker,
@@ -196,16 +198,25 @@ class LiveKitService:
                 logger.error(f"Failed to send call details to webhook: {e}")
 
 
-    async def start_room_recording(self, room_name: str) -> Optional[str]:
+    async def start_room_recording(self, room_name: str, assistant_id: str) -> Optional[str]:
         """Start recording the room using LiveKit Egress"""
         try:
             async with self.get_livekit_api() as lkapi:
+                # Store the recording in Year/Month/Day/Timestamp.ogg format
                 timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-                filename = f"{room_name}_{timestamp}.ogg"
+                folder_path = datetime.utcnow().strftime('%Y/%m/%d')
+                filepath = f"lvk_call_recordings/{folder_path}/{assistant_id}/{timestamp}.ogg"
 
+                # Set the file output
                 file_output = api.EncodedFileOutput(
                     file_type=api.EncodedFileType.OGG,
-                    filepath=f"/out/{filename}",  # Path inside container which is mapped to ./output-recordings/ on host
+                    filepath=filepath,  # Path or the s3 key
+                    s3=api.S3Upload(
+                        access_key=settings.AWS_ACCESS_KEY_ID,
+                        secret=settings.AWS_SECRET_ACCESS_KEY,
+                        region=settings.AWS_REGION,
+                        bucket=settings.S3_BUCKET_NAME,
+                    )
                 )
 
                 # Start room composite recording (records all participants)
@@ -218,7 +229,20 @@ class LiveKitService:
                 )
 
                 logger.info(f"Recording started: {egress_info.egress_id}")
-                return egress_info.egress_id
+
+                # Create S3 URL
+                s3_url = f"https://{settings.S3_BUCKET_NAME}.s3.{settings.AWS_REGION}.amazonaws.com/{filepath}"
+
+                payload = {
+                    "success": True,
+                    "message": "Recording started successfully",
+                    "data": {
+                        "egress_id": egress_info.egress_id,
+                        "room_name": room_name,
+                        "s3_url": s3_url,
+                    }
+                }
+                return payload
 
         except Exception as e:
             logger.error(f"Failed to start recording: {e}", exc_info=True)

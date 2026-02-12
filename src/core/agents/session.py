@@ -25,7 +25,6 @@ from src.core.agents.utils import render_prompt
 from src.core.db.database import Database
 from src.core.db.db_schemas import Assistant
 from src.services.livekit.livekit_svc import LiveKitService
-from src.services.storage.s3_service import S3Service
 
 
 setup_logging()
@@ -80,6 +79,22 @@ async def entrypoint(ctx: JobContext):
 
     # Initialize Services per session
     livekit_services = LiveKitService()
+    s3_url = None
+
+    # Start Recording
+    try:
+        recording_info = await livekit_services.start_room_recording(
+            room_name=ctx.room.name, 
+            assistant_id=assistant_id
+        )
+        if recording_info and recording_info.get("success"):
+            logger.info(f"Recording started: {recording_info}")
+            s3_url = recording_info["data"]["s3_url"]
+            logger.info(f"S3 URL: {s3_url}")
+        else:
+            logger.warning(f"Recording start returned failure or empty: {recording_info}")
+    except Exception as e:
+        logger.error(f"Failed to start recording: {e}", exc_info=True)
 
     # Initialize Agent Instance
     agent_instance = DynamicAssistant(
@@ -153,6 +168,7 @@ async def entrypoint(ctx: JobContext):
                     assistant_id=assistant_id,
                     assistant_name=assistant.assistant_name,
                     to_number=to_number,
+                    recording_path=s3_url,
                 )
             )
 

@@ -56,5 +56,8 @@ class Settings:
         self.S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "")
         self.S3_RECORDINGS_PREFIX = os.getenv("S3_RECORDINGS_PREFIX", "recordings/")
 
+        # Backend URL
+        self.BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+
 
 settings = Settings()

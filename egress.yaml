@@ -16,6 +16,7 @@ redis:
 # Output directory inside the container
 # This is mapped to ./output-recordings on the host via docker-compose
 # Recordings will be saved to /out/ in the container
+# NOTE: S3 upload is handled manually by the application after recording completes
 
 # Additional Egress options
 # room_only: false  # Set to true to only process room composite requests
