@@ -77,3 +77,53 @@ async def update_assistant(assistant_id: str, request: UpdateAssistant, current_
             "assistant_id": assistant_id
         }
     )
+
+
+# List assistants
+@router.get("/list")
+async def list_assistants(current_user: APIKey = Depends(get_current_user)):
+    
+    logger.info(f"Received request to list assistants")
+    
+    # Fetch only active assistants created by the current user
+    assistants = await Assistant.find(
+        Assistant.assistant_created_by_email == current_user.user_email,
+        Assistant.assistant_is_active == True
+    ).to_list()
+    
+    # Filter only requested fields
+    filtered_assistants = [
+        {
+            "assistant_id": assistant.assistant_id,
+            "assistant_name": assistant.assistant_name,
+            "assistant_tts_model": assistant.assistant_tts_model,
+            "assistant_created_by_email": assistant.assistant_created_by_email
+        }
+        for assistant in assistants
+    ]
+    
+    return apiResponse(
+        success=True,
+        message="Assistants retrieved successfully",
+        data=filtered_assistants
+    )
+
+
+# Fetch assistant details
+@router.get("/details/{assistant_id}")
+async def get_assistant_details(assistant_id: str, current_user: APIKey = Depends(get_current_user)):
+    
+    logger.info(f"Received request to get assistant details: {assistant_id}")
+    
+    assistant = await Assistant.find_one(Assistant.assistant_id == assistant_id,
+                                        Assistant.assistant_created_by_email == current_user.user_email,
+                                        Assistant.assistant_is_active == True)
+    
+    if not assistant:
+        raise HTTPException(status_code=404, detail="Assistant not found")
+    
+    return apiResponse(
+        success=True,
+        message="Assistant details retrieved successfully",
+        data=assistant.model_dump(exclude={"id"})
+    )

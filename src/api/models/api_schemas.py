@@ -45,7 +45,7 @@ class CreateAssistant(BaseModel):
                 "assistant_tts_voice_id": "Cartesia Voice ID",
                 "assistant_start_instruction": "Start instruction. This can have placeholders liken {{name}} in the start instruction",
                 "assistant_end_call_url": "End call url. This is the place where sever will sen dthe detial at the end of the call",
-                "assistant_tts_speaker": "Sarvam speaker",
+                "assistant_tts_speaker": "Sarvam speaker. Only allowed for sarvam",
             }
         }
 
@@ -80,14 +80,14 @@ class UpdateAssistant(BaseModel):
     class Config:
         # Strip whitespace from string fields
         str_strip_whitespace = True
-        # Example for API documentation
-        json_schema_extra = {
-            "example": {
-                "assistant_name": "Updated Assistant Name",
-                "assistant_prompt": "You are an updated assistant.",
-                "assistant_tts_voice_id": "New Voice ID",
-            }
-        }
+        # # Example for API documentation
+        # json_schema_extra = {
+        #     "example": {
+        #         "assistant_name": "Updated Assistant Name",
+        #         "assistant_prompt": "You are an updated assistant.",
+        #         "assistant_tts_voice_id": "New Voice ID",
+        #     }
+        # }
 
     @model_validator(mode="after")
     def validate_tts_fields(self):
