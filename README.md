@@ -1,6 +1,6 @@
 # LiveKit Agent Service
 
-A production-ready service for deploying real-time AI voice agents using LiveKit, OpenAI Realtime API, and Cartesia/Sarvam TTS. This service provides a REST API for managing assistants, SIP trunks, and triggering outbound calls, along with a robust agent worker for handling real-time interactions.
+A production-ready service for deploying real-time AI voice agents using LiveKit, OpenAI Realtime API, and Cartesia/Sarvam TTS. This service provides a REST API for managing assistants, tools, SIP trunks, and triggering outbound calls, along with a robust agent worker for handling real-time interactions.
 
 ## 🚀 Features
 
@@ -8,6 +8,7 @@ A production-ready service for deploying real-time AI voice agents using LiveKit
 - **SIP Support**: Create and manage SIP outbound trunks (Twilio/Exotel) for telephony integration.
 - **Outbound Calls**: Trigger programmatic outbound calls to phone numbers (currently supporting Twilio).
 - **Dynamic Assistants**: Create and configure assistants with custom prompts, voices (Cartesia), speakers (Sarvam), and start instructions.
+- **Custom Tools**: Extend assistant capabilities with custom tools (Webhooks, Static Responses).
 - **Call Recording**: Automatic call recording with LiveKit Egress.
 - **Transcripts**: Real-time transcription storage in MongoDB.
 - **Webhooks**: Automatic webhook notifications for call completion with detailed analytics.
@@ -27,7 +28,7 @@ A production-ready service for deploying real-time AI voice agents using LiveKit
 1. **API Service**: Manages resources (Assistants, API Keys, Trunks) and triggers calls.
 2. **Agent Worker**: Connects to LiveKit rooms to handle AI logic (STT, LLM, TTS).
 3. **LiveKit Server**: Handles real-time audio/video transport.
-4. **MongoDB**: Stores configuration, call records, and transcripts.
+4. **MongoDB**: Stores configuration (assistants, tools), call records, and transcripts.
 5. **Webhooks**: Pushes call data to external services upon completion.
 
 ## 📋 Prerequisites
@@ -174,6 +175,59 @@ Update an existing assistant's configuration. Only provide the fields you want t
   "assistant_prompt": "You are an updated assistant."
 }
 ```
+
+### Tools
+
+**POST** `/tool/create`
+Define a custom tool for your assistant. Tools can either call a webhook or return a static value during the conversation.
+
+_Webhook Tool Example:_
+
+```json
+{
+  "tool_name": "lookup_weather",
+  "tool_description": "Get the weather for a location",
+  "tool_parameters": [
+    {
+      "name": "location",
+      "type": "string",
+      "description": "City name",
+      "required": true
+    }
+  ],
+  "tool_execution_type": "webhook",
+  "tool_execution_config": {
+    "url": "https://api.example.com/weather",
+    "timeout": 5,
+    "headers": {"Authorization": "Bearer token"}
+  }
+}
+```
+
+_Static Return Tool Example:_
+
+```json
+{
+  "tool_name": "get_support_email",
+  "tool_description": "Get the support email address",
+  "tool_execution_type": "static_return",
+  "tool_execution_config": {
+    "value": "support@example.com"
+  }
+}
+```
+
+**POST** `/tool/attach/{assistant_id}`
+Attach one or more tools to an assistant.
+
+```json
+{
+  "tool_ids": ["<tool_id>"]
+}
+```
+
+**GET** `/tool/list`
+List all tools created by the user.
 
 ### SIP Trunks
 
