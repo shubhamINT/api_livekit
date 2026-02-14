@@ -1,17 +1,24 @@
-import re
+import chevron
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def render_prompt(text: str, data: dict) -> str:
     """
-    Replaces placeholders like {{key}} or {{ key }} in the text with values from data.
-    If a key is missing from data, the placeholder is left as is.
+    Renders mustache-style {{key}} placeholders in text using chevron.
+    Supports nested access like {{user.name}} and {{items.0}}.
+    Missing keys are rendered as empty strings (Mustache standard).
     """
     if not text:
         return text
-    
-    # Matches {{key}} or {{ key }}
-    # \w+ matches alphanumeric characters and underscore
-    return re.sub(
-        r'\{\{\s*(\w+)\s*\}\}', 
-        lambda m: str(data.get(m.group(1), m.group(0))), 
-        text
-    )
+
+    if not data:
+        return text
+
+    try:
+        # Standard mustache behavior: missing keys -> empty string
+        return chevron.render(text, data)
+    except Exception as e:
+        logger.error(f"Error rendering prompt template: {e}")
+        return text

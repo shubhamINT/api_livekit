@@ -12,4 +12,5 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "livekit-agents[cartesia,openai,sarvam,turn-detector]~=1.3",
     "boto3>=1.34.0",
+    "chevron>=0.14.0",
 ]
