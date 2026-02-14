@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional, Literal, Text, List, Dict
 from beanie import Document, Indexed
-from pydantic import Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr
 
 
 # API key storage
@@ -37,6 +37,7 @@ class Assistant(Document):
     assistant_created_by_email: EmailStr
     assistant_updated_by_email: EmailStr
     assistant_is_active: bool = True
+    tool_ids: List[str] = []  # References to Tool.tool_id
 
     class Settings:
         name = "assistants"  # Collection name in MongoDB
@@ -70,3 +71,32 @@ class CallRecord(Document):
 
     class Settings:
         name = "call_records"
+
+
+class ToolParameter(BaseModel):
+    """Single parameter definition for a tool."""
+
+    name: str
+    type: Literal["string", "number", "boolean", "object", "array"] = "string"
+    description: Optional[str] = None
+    required: bool = True
+    enum: Optional[List[str]] = None
+
+
+class Tool(Document):
+    """Tool definition stored in MongoDB."""
+
+    tool_id: Indexed(str, unique=True)
+    tool_name: str  # e.g. "lookup_weather" (snake_case, unique per user)
+    tool_description: str  # Docstring sent to the LLM
+    tool_parameters: List[ToolParameter] = []
+    tool_execution_type: Literal["webhook", "static_return"] = "webhook"
+    tool_execution_config: Dict = {}  # {"url": "..."} or {"value": ...}
+    tool_created_by_email: EmailStr
+    tool_updated_by_email: EmailStr
+    tool_created_at: datetime = Field(default_factory=datetime.utcnow)
+    tool_updated_at: datetime = Field(default_factory=datetime.utcnow)
+    tool_is_active: bool = True
+
+    class Settings:
+        name = "tools"  # Collection name in MongoDB

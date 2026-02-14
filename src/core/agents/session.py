@@ -23,6 +23,7 @@ from src.core.config import settings
 from src.core.logger import logger, setup_logging
 from src.core.agents.dynamic_assistant import DynamicAssistant
 from src.core.agents.utils import render_prompt
+from src.core.agents.tool_builder import build_tools_from_db
 from src.core.db.database import Database
 from src.core.db.db_schemas import Assistant
 from src.services.livekit.livekit_svc import LiveKitService
@@ -97,12 +98,22 @@ async def entrypoint(ctx: JobContext):
     except Exception as e:
         logger.error(f"Failed to start recording: {e}", exc_info=True)
 
+    # Load tools attached to this assistant
+    tools = []
+    if assistant.tool_ids:
+        try:
+            tools = await build_tools_from_db(assistant.tool_ids)
+            logger.info(f"Loaded {len(tools)} tool(s) for assistant {assistant.assistant_id}")
+        except Exception as e:
+            logger.error(f"Failed to load tools: {e}", exc_info=True)
+
     # Initialize Agent Instance
     agent_instance = DynamicAssistant(
         room=ctx.room,
         instructions=assistant.assistant_prompt,
         start_instruction=assistant.assistant_start_instruction
         or "Greet the user Professionally",
+        tools=tools,
     )
 
     llm = realtime.RealtimeModel(
