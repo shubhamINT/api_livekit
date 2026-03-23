@@ -24,6 +24,7 @@ class LiveKitService:
     _shared_client: LiveKitAPI | None = None
 
     def __init__(self):
+        """Initialize service configuration and in-memory transcript storage."""
         self.api_key = settings.LIVEKIT_API_KEY
         self.api_secret = settings.LIVEKIT_API_SECRET
         self.url = settings.LIVEKIT_URL
@@ -46,6 +47,7 @@ class LiveKitService:
 
     # Create livekit room
     async def create_room(self, assistant_id: str) -> str:
+        """Create and return a unique LiveKit room name for an assistant."""
         async with self.get_livekit_api() as lkapi:
             # Create a unique room name with agent name
             unique_room_name = f"{assistant_id}_{uuid.uuid4().hex[:8]}"
@@ -58,6 +60,7 @@ class LiveKitService:
 
     # Create agent dispatch
     async def create_agent_dispatch(self, room_name: str, metadata: Optional[dict] = None):
+        """Create an agent dispatch for a room with optional metadata."""
         async with self.get_livekit_api() as lkapi:
             # Create agent dispatch with metadata
             agent_dispatch = await lkapi.agent_dispatch.create_dispatch(
@@ -78,6 +81,7 @@ class LiveKitService:
         trunk_auth_username: str,
         trunk_auth_password: str,
     ):
+        """Create and return a SIP outbound trunk in LiveKit."""
         async with self.get_livekit_api() as lkapi:
             trunk_info = SIPOutboundTrunkInfo(
                 name=trunk_name,
@@ -100,6 +104,7 @@ class LiveKitService:
         trunk_id: str,
         participant_identity: str,
     ):
+        """Dial out by adding a SIP participant to a room via a trunk."""
         async with self.get_livekit_api() as lkapi:
             participant = await lkapi.sip.create_sip_participant(
                 api.CreateSIPParticipantRequest(
@@ -123,6 +128,7 @@ class LiveKitService:
         to_number: str,
         recording_path: Optional[str],
     ):
+        """Append a transcript entry to an existing call record or create a new one."""
         # If room name present in call_records collection, update it
         call_record = await CallRecord.find_one(CallRecord.room_name == room_name)
         if call_record:
@@ -173,6 +179,7 @@ class LiveKitService:
         ] = "initiated",
         call_status_reason: Optional[str] = None,
     ):
+        """Create a call record if missing, or refresh base call metadata if present."""
         call_record = await CallRecord.find_one(CallRecord.room_name == room_name)
         if call_record:
             call_record.assistant_id = assistant_id
@@ -217,6 +224,7 @@ class LiveKitService:
         ended_at: Optional[datetime] = None,
         call_duration_minutes: Optional[float] = None,
     ):
+        """Update call status fields for a room and persist the changes."""
         call_record = await CallRecord.find_one(CallRecord.room_name == room_name)
         if not call_record:
             return None
@@ -237,6 +245,7 @@ class LiveKitService:
         return call_record
 
     async def send_end_call_webhook(self, room_name: str, assistant_id: str):
+        """Send post-call details to the assistant's configured end-call webhook URL."""
         call_record = await CallRecord.find_one(CallRecord.room_name == room_name)
         if not call_record:
             logger.info(f"No call record found for room: {room_name}; skipping webhook")
@@ -299,7 +308,7 @@ class LiveKitService:
 
     # Update And send Details at the end of the call
     async def end_call(self, room_name: str, assistant_id: str):
-        """Update the call record with the end time"""
+        """Mark a call as completed, store duration, and trigger end-call webhook."""
         call_record = await CallRecord.find_one(CallRecord.room_name == room_name)
         if call_record:
             if call_record.call_status in {
@@ -383,6 +392,7 @@ class LiveKitService:
 
     # Create token for web call — user joins room, agent is auto-dispatched via RoomConfiguration
     async def create_token(self, room_name: str, metadata: Optional[dict] = None) -> Optional[str]:
+        """Generate a JWT token that allows a user to join and publish in a room."""
         try:
             at = AccessToken(self.api_key, self.api_secret)
             at.with_identity(f"user-{uuid.uuid4().hex[:8]}")

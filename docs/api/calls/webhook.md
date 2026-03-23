@@ -1,6 +1,6 @@
 # End Call Webhook
 
-If the assistant has `assistant_end_call_url` configured, a POST request is sent when the call ends.
+If the assistant has `assistant_end_call_url` configured, a POST request is sent when the call reaches a terminal state.
 
 ### Webhook Request
 
@@ -57,7 +57,7 @@ Content-Type: application/json
 | `data.assistant_id`            | string  | ID of the assistant used.                  |
 | `data.assistant_name`          | string  | Name of the assistant.                     |
 | `data.to_number`               | string  | Phone number that was called.              |
-| `data.call_status`             | string  | Call lifecycle status (`initiated`, `answered`, `completed`) or SIP outcome (`busy`, `no_answer`, `rejected`, `cancelled`, `unreachable`, `timeout`, `failed`). |
+| `data.call_status`             | string  | Call lifecycle status (`initiated`, `answered`, `completed`) or terminal SIP outcome (`busy`, `no_answer`, `rejected`, `cancelled`, `unreachable`, `timeout`, `failed`). |
 | `data.call_status_reason`      | string  | Optional detailed reason for non-success outcomes. |
 | `data.sip_status_code`         | number  | SIP response code for failed/not-answered outcomes (if available). |
 | `data.sip_status_text`         | string  | SIP response reason text for failed/not-answered outcomes (if available). |
@@ -138,9 +138,19 @@ Content-Type: application/json
 
 !!! warning "Important"
 
-    - Webhooks are sent **after** the call ends and recording/transcript are saved
+    - Webhooks are sent when call status becomes terminal (for example `completed`, `busy`, `no_answer`, `failed`)
     - Current runtime sends a single webhook request with a 10s timeout
-    - Current runtime does not treat non-2xx HTTP status as a delivery failure
+    - Current runtime treats non-2xx HTTP status as failed delivery in runtime logging
     - Current runtime does not parse webhook response body
     - Ensure your webhook endpoint responds quickly (< 10 seconds)
     - Store the `room_name` to correlate with call initiation
+
+### Exotel Terminal Mapping Notes
+
+- Exotel outbound setup can complete asynchronously after the initial `202 Accepted` API response.
+- If SIP returns `200 OK` but no RTP arrives (`no_rtp_after_answer`), runtime surfaces final `call_status` as `failed`.
+- Final status is emitted once per call lifecycle in webhook delivery flow.
+
+### Public Payload vs Internal Tracking
+
+Internal delivery-tracking fields (for example webhook claim/inflight timestamps) are runtime internals and are not part of the public webhook payload contract.

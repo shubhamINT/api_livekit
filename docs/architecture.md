@@ -90,6 +90,14 @@ graph TD
     LKR <-->|Audio| Agent
 ```
 
+### Outbound Exotel Lifecycle
+
+- API accepts Exotel outbound requests asynchronously and returns `202 Accepted` after dispatch/bridge startup.
+- SIP setup outcome is resolved out-of-band; final call result is surfaced through end-call webhook payloads.
+- Agent speech + recording are gated by bridge `call_answered` signaling to avoid recording before answer.
+- Terminal status finalization and webhook emission are handled through a single lifecycle path to reduce duplicate or conflicting terminal updates.
+- If SIP returns `200 OK` but no RTP ever arrives (`no_rtp_after_answer`), lifecycle final status is treated as `failed`.
+
 ## Provider Support Matrix
 
 | Provider | Inbound | Outbound | Implementation path |

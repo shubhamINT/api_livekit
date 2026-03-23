@@ -93,7 +93,7 @@ async def trigger_outbound_call(
         sip_config = trunk.trunk_config
 
         # One-shot queue — bridge puts result after INVITE resolves, then keeps running
-        result_signal = asyncio.Queue(maxsize=0)
+        result_signal = asyncio.Queue(maxsize=1)
 
         asyncio.create_task(
             run_bridge(
@@ -106,50 +106,63 @@ async def trigger_outbound_call(
 
         async def monitor_exotel_setup_result():
             try:
-                sip_result = await asyncio.wait_for(result_signal.get(), timeout=60.0)
-            except asyncio.TimeoutError:
-                await livekit_services.update_call_status(
-                    room_name=room_name,
-                    call_status="timeout",
-                    call_status_reason="SIP call setup timed out",
-                    sip_status_code=None,
-                    sip_status_text="SIP timeout",
-                    ended_at=datetime.now(timezone.utc),
-                    call_duration_minutes=0,
-                )
-                await livekit_services.send_end_call_webhook(
-                    room_name=room_name,
-                    assistant_id=assistant.assistant_id,
-                )
-                logger.warning(f"Exotel SIP setup timed out | room={room_name}")
-                return
+                try:
+                    sip_result = await asyncio.wait_for(result_signal.get(), timeout=60.0)
+                except asyncio.TimeoutError:
+                    await livekit_services.update_call_status(
+                        room_name=room_name,
+                        call_status="timeout",
+                        call_status_reason="SIP call setup timed out",
+                        sip_status_code=None,
+                        sip_status_text="SIP timeout",
+                        ended_at=datetime.now(timezone.utc),
+                        call_duration_minutes=0,
+                    )
+                    await livekit_services.send_end_call_webhook(
+                        room_name=room_name,
+                        assistant_id=assistant.assistant_id,
+                    )
+                    logger.warning(f"Exotel SIP setup timed out | room={room_name}")
+                    return
 
-            if not sip_result.get("success"):
-                await livekit_services.update_call_status(
-                    room_name=room_name,
-                    call_status=sip_result.get("call_status", "failed"),
-                    call_status_reason=sip_result.get("error", "unknown"),
-                    sip_status_code=sip_result.get("sip_status_code"),
-                    sip_status_text=sip_result.get("sip_status_text"),
-                    ended_at=datetime.now(timezone.utc),
-                    call_duration_minutes=0,
-                )
-                await livekit_services.send_end_call_webhook(
-                    room_name=room_name,
-                    assistant_id=assistant.assistant_id,
-                )
-                logger.warning(
-                    f"Exotel SIP setup failed | room={room_name} | reason={sip_result.get('error', 'unknown')}"
-                )
-                return
+                if not sip_result.get("success"):
+                    await livekit_services.update_call_status(
+                        room_name=room_name,
+                        call_status=sip_result.get("call_status", "failed"),
+                        call_status_reason=sip_result.get("error", "unknown"),
+                        sip_status_code=sip_result.get("sip_status_code"),
+                        sip_status_text=sip_result.get("sip_status_text"),
+                        ended_at=datetime.now(timezone.utc),
+                        call_duration_minutes=0,
+                    )
+                    await livekit_services.send_end_call_webhook(
+                        room_name=room_name,
+                        assistant_id=assistant.assistant_id,
+                    )
+                    logger.warning(
+                        f"Exotel SIP setup failed | room={room_name} | reason={sip_result.get('error', 'unknown')}"
+                    )
+                    return
 
-            await livekit_services.update_call_status(
-                room_name=room_name,
-                call_status=sip_result.get("call_status", "answered"),
-                call_status_reason=None,
-                answered_at=datetime.now(timezone.utc),
-            )
-            logger.info(f"Exotel SIP setup answered | room={room_name}")
+                # Status update deferred to agent session (session.py handles "answered" + recording)
+                logger.info(f"Exotel SIP answered | room={room_name} — status update deferred to agent session")
+
+            except Exception as e:
+                logger.error(f"Exotel monitor crashed | room={room_name}: {e}", exc_info=True)
+                try:
+                    await livekit_services.update_call_status(
+                        room_name=room_name,
+                        call_status="failed",
+                        call_status_reason=f"Monitor error: {e}",
+                        ended_at=datetime.now(timezone.utc),
+                        call_duration_minutes=0,
+                    )
+                    await livekit_services.send_end_call_webhook(
+                        room_name=room_name,
+                        assistant_id=assistant.assistant_id,
+                    )
+                except Exception:
+                    pass
 
         asyncio.create_task(monitor_exotel_setup_result())
 

@@ -133,20 +133,26 @@ async def entrypoint(ctx: JobContext):
         if recording_started:
             return
         recording_started = True
-        try:
-            recording_info = await livekit_services.start_room_recording(
-                room_name=ctx.room.name, 
-                assistant_id=assistant_id
-            )
-            if recording_info and recording_info.get("success"):
-                recording_data = recording_info.get("data")
-                if isinstance(recording_data, dict):
-                    s3_url = recording_data.get("s3_url")
-                    logger.info(f"Recording started | S3: {s3_url}")
-            else:
-                logger.warning(f"Recording start returned failure or empty: {recording_info}")
-        except Exception as e:
-            logger.error(f"Failed to start recording: {e}", exc_info=True)
+        max_retries = 2
+        for attempt in range(1, max_retries + 1):
+            try:
+                recording_info = await livekit_services.start_room_recording(
+                    room_name=ctx.room.name, 
+                    assistant_id=assistant_id
+                )
+                if recording_info and recording_info.get("success"):
+                    recording_data = recording_info.get("data")
+                    if isinstance(recording_data, dict):
+                        s3_url = recording_data.get("s3_url")
+                        logger.info(f"Recording started | S3: {s3_url}")
+                    return
+                else:
+                    logger.warning(f"Recording attempt {attempt}/{max_retries} returned failure: {recording_info}")
+            except Exception as e:
+                logger.error(f"Recording attempt {attempt}/{max_retries} failed: {e}", exc_info=True)
+            if attempt < max_retries:
+                await asyncio.sleep(2)
+        logger.error("Recording failed after all retries — call will proceed without recording")
 
     # Keep existing behavior for non-Exotel calls.
     if not is_exotel_outbound:

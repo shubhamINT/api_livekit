@@ -35,6 +35,11 @@ Retrieve call logs for a specific assistant with support for pagination, sorting
 | `data.logs[].assistant_id`          | string  | ID of the assistant involved in the call.                |
 | `data.logs[].assistant_name`        | string  | Name of the assistant at the time of the call.           |
 | `data.logs[].to_number`             | string  | Destination phone number.                                |
+| `data.logs[].call_status`           | string  | Call status (`initiated`, `answered`, `completed`, `busy`, `no_answer`, `rejected`, `cancelled`, `unreachable`, `timeout`, `failed`). |
+| `data.logs[].call_status_reason`    | string  | Optional status detail for terminal non-completed calls. |
+| `data.logs[].sip_status_code`       | integer | SIP status code when available.                          |
+| `data.logs[].sip_status_text`       | string  | SIP status text when available.                          |
+| `data.logs[].answered_at`           | string  | ISO 8601 timestamp when the call was answered.           |
 | `data.logs[].started_at`            | string  | ISO 8601 timestamp of when the call started.             |
 | `data.logs[].ended_at`              | string  | ISO 8601 timestamp of when the call ended.               |
 | `data.logs[].call_duration_minutes` | float   | Total call duration in minutes.                          |
@@ -75,6 +80,11 @@ curl -X GET "https://api-livekit-vyom.indusnettechnologies.com/assistant/call-lo
         "assistant_id": "550e8400-e29b-41d4-a716-446655440000",
         "assistant_name": "Support Bot",
         "to_number": "+1234567890",
+        "call_status": "completed",
+        "call_status_reason": null,
+        "sip_status_code": null,
+        "sip_status_text": null,
+        "answered_at": "2024-01-20T14:30:02.000Z",
         "started_at": "2024-01-20T14:30:00.000Z",
         "ended_at": "2024-01-20T14:35:00.000Z",
         "call_duration_minutes": 5.0,
@@ -97,3 +107,9 @@ curl -X GET "https://api-livekit-vyom.indusnettechnologies.com/assistant/call-lo
   }
 }
 ```
+
+### Status Interpretation
+
+- Completed calls usually have `call_status="completed"` and non-null `answered_at`.
+- Calls not answered or failed during setup can end with terminal statuses like `busy`, `no_answer`, `timeout`, or `failed`.
+- For SIP-driven failures, `sip_status_code` and `sip_status_text` help explain provider-level outcomes.

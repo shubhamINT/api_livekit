@@ -18,6 +18,13 @@ FastAPI backend plus LiveKit worker for real-time voice assistants with OpenAI R
 - Inbound calls: `exotel` only.
 - Twilio inbound is not implemented.
 
+## Exotel Outbound Lifecycle
+
+- Exotel outbound API calls return `202 Accepted` while SIP setup continues asynchronously.
+- Final call outcomes are delivered through end-call webhook payloads (`completed`, `busy`, `no_answer`, `timeout`, `failed`, etc.).
+- Exotel outbound recording starts only after the bridge signals `call_answered` (after successful answer path).
+- Trunk/provider mismatch is rejected at API level (`trunk_type` must match `call_service`).
+
 ## Architecture
 
 1. API service (`src/api/server.py`) exposes REST endpoints.
@@ -92,6 +99,12 @@ Optional Docker flow:
 docker-compose up --build
 ```
 
+Run unit tests:
+
+```bash
+uv run python -m unittest discover -s tests -v
+```
+
 ## Documentation
 
 - MkDocs source lives in `docs/`.
@@ -141,6 +154,7 @@ api_livekit/
 ├── assets/
 │   └── audio/
 ├── docs/
+├── tests/
 ├── src/
 │   ├── api/
 │   │   ├── dependencies/
