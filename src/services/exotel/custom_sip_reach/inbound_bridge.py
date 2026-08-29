@@ -3,15 +3,15 @@ Main inbound bridge orchestrator — handles incoming SIP INVITEs from Exotel,
 wires up RTP, and connects an agent via LiveKit.
 
 handle_inbound_call (main loop): SIP negotiation, DB lookups, 200 OK response.
-_run_inbound_bridge (thread): LiveKit + RTP audio bridge lifecycle.
+The media half runs in its own process — see inbound_worker.py.
 """
 
 import asyncio
 import json
-import threading
+import os
+import queue as _stdlib_queue
 import uuid
 
-from livekit import rtc
 from livekit.api import AccessToken, VideoGrants, SIPGrants
 
 from .config import (
@@ -20,20 +20,45 @@ from .config import (
     EXOTEL_MEDIA_IP,
     LK_API_KEY,
     LK_API_SECRET,
-    LK_URL,
     PCMA_PAYLOAD_TYPE,
     PCMU_PAYLOAD_TYPE,
-    RTP_SILENCE_TIMEOUT_SECONDS,
     validate_config,
 )
-from .inbound_listener import register_call_id, unregister_call_id
+from .inbound_listener import DuplicateCallId, register_call_id, unregister_call_id
+from .inbound_worker import inbound_bridge_subprocess_entry
 from .port_pool import get_port_pool
-from .rtp_bridge import RTPMediaBridge
 from .sip_client import format_exotel_number
 from src.core.db.db_schemas import Assistant, InboundSIP
 from src.services.livekit.livekit_svc import LiveKitService
-from src.services.outbound_dispatcher.dispatcher import try_reserve_slot, release_slot, _watch_agent_join
-from src.core.logger import logger, set_room_context, clear_room_context
+from src.services.outbound_dispatcher.dispatcher import (
+    TELEPHONY,
+    _reap_bridge,
+    _terminate_bridge,
+    _watch_agent_join,
+    get_bridge_context,
+    release_slot,
+    try_reserve_slot,
+)
+from src.core.logger import logger, set_room_context
+
+
+# Ring until the agent can actually speak, instead of answering as soon as the media path is
+# up and letting the caller listen to the agent boot. Set false to restore the old behaviour.
+RING_UNTIL_AGENT_READY = os.getenv("INBOUND_RING_UNTIL_AGENT_READY", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
+# How long the caller may hear ringing before we answer regardless. Has to cover the
+# inbound-context webhook (up to 10s) plus agent boot, and stay well under Exotel's INVITE
+# timeout. The call is answered on expiry, never dropped.
+MAX_RING_SECONDS = float(os.getenv("INBOUND_MAX_RING_SECONDS", "15"))
+
+# How long to wait for the bridge process to bind RTP and join the room. Must exceed the
+# worker's own 15s LiveKit connect timeout so a connect failure is reported rather than timed
+# out blindly.
+MEDIA_READY_TIMEOUT = float(os.getenv("INBOUND_MEDIA_READY_TIMEOUT", "20"))
 
 
 def _extract_sip_number(header_value: str) -> str:
@@ -49,102 +74,23 @@ def _build_sip_response(
     from_header: str,
     to_header: str,
     via_headers: list[str],
+    to_tag: str | None = None,
 ) -> bytes:
+    """Build a bodyless SIP response.
+
+    to_tag is appended to the To header when given. Once a tagged 180 has gone out, every later
+    response in that transaction — including the 487 for a caller who hangs up while ringing —
+    has to carry the same tag, or Exotel sees a different dialog than the one it is in.
+    """
     headers = [status_line]
     for via in via_headers:
         headers.append(f"Via: {via}")
     headers.append(f"From: {from_header}")
-    headers.append(f"To: {to_header}")
+    headers.append(f"To: {to_header}" + (f";tag={to_tag}" if to_tag else ""))
     headers.append(f"Call-ID: {call_id}")
     headers.append(f"CSeq: {cseq}")
     headers.append("Content-Length: 0")
     return ("\r\n".join(headers) + "\r\n\r\n").encode()
-
-
-async def _run_inbound_bridge(
-    rtp_bridge: RTPMediaBridge,
-    room_name: str,
-    port: int,
-    remote_ip: str,
-    remote_port: int,
-    pt: int,
-    call_id: str,
-    inbound_bye: threading.Event,
-    token: str,
-) -> None:
-    """
-    Runs in its own thread via asyncio.run().
-    Owns the LiveKit room + RTP bridge lifecycle for one inbound call.
-    """
-    pool = get_port_pool()
-    room = rtc.Room()
-    set_room_context(room_name)
-
-    try:
-        @room.on("track_subscribed")
-        def on_track(track, publication, participant):
-            if track.kind == rtc.TrackKind.KIND_AUDIO:
-                logger.info(
-                    f"[INBOUND] Agent audio from {participant.identity} "
-                    f"(source={publication.source}) — adding to mixer"
-                )
-                rtp_bridge.add_outbound_track(track)
-                rtp_bridge.start_outbound_mixer()
-
-        await room.connect(LK_URL, token)
-        logger.info(f"[INBOUND] Bridge thread: LiveKit connected room={room_name}")
-        await rtp_bridge.start_inbound(room)
-        rtp_bridge.set_remote_endpoint(remote_ip, remote_port, pt)
-
-        # Wait for agent process to finish booting before signalling call_answered.
-        await asyncio.sleep(1.5)
-
-        try:
-            await room.local_participant.publish_data(
-                json.dumps({"event": "call_answered"}).encode(),
-                topic="sip_bridge_events",
-            )
-            logger.info("[INBOUND] Published call_answered event to agent")
-        except Exception as e:
-            logger.error(f"[INBOUND] Failed to publish call_answered event: {e}")
-
-        disconnect_reason = "unknown"
-        while True:
-            if room.connection_state != rtc.ConnectionState.CONN_CONNECTED:
-                disconnect_reason = "livekit_disconnected"
-                break
-            if inbound_bye.is_set():
-                disconnect_reason = "sip_bye"
-                break
-            since_rx = rtp_bridge.seconds_since_rx()
-            if (
-                since_rx is not None
-                and RTP_SILENCE_TIMEOUT_SECONDS > 0
-                and since_rx > RTP_SILENCE_TIMEOUT_SECONDS
-            ):
-                disconnect_reason = "rtp_silence_after_flow"
-                break
-            await asyncio.sleep(1)
-
-        logger.info(f"[INBOUND] Call ended — reason={disconnect_reason}")
-
-    except Exception as e:
-        logger.error(f"[INBOUND] Bridge error: {e}", exc_info=True)
-
-    finally:
-        try:
-            await rtp_bridge.close_streams()
-            rtp_bridge.stop()
-        except Exception as e:
-            logger.warning(f"[INBOUND] rtp_bridge.stop() raised: {e}")
-        try:
-            await room.disconnect()
-        except Exception as e:
-            logger.warning(f"[INBOUND] room.disconnect() raised: {e}")
-        pool.release(port)
-        logger.info(f"[INBOUND] Port {port} released")
-        unregister_call_id(call_id)
-        clear_room_context()
 
 
 async def handle_inbound_call(
@@ -156,17 +102,55 @@ async def handle_inbound_call(
     cseq: str,
     via_headers: list[str],
     record_routes: list[str],
+    peer_ip: str | None = None,
 ):
     """
-    Phase 1 (main loop): SIP validation, DB lookups, send SIP response, acquire port.
-    Phase 2 (bridge thread): LiveKit + RTP audio lifecycle via _run_inbound_bridge.
+    Phase 1 (this coroutine, on the listener's loop): SIP validation, DB lookups, slot
+    reservation, port acquisition, agent dispatch.
+    Phase 2 (its own OS process, inbound_worker.py): LiveKit + RTP audio lifecycle.
+
+    Returns once the 200 OK is sent; a monitor task owns the bridge process from there, so a
+    call does not hold an INVITE setup slot for its whole duration.
     """
+    # The dialog's To-tag, minted once here and used by every response this function sends.
+    #
+    # It has to be decided before the first tagged response goes out, which is the 180 Ringing
+    # — long before the RTP port is known. It used to be generated inline inside build_200_ok()
+    # from a fresh uuid4() and the port number, which is fine when the 200 OK is the only
+    # tagged response but breaks the moment a 180 precedes it: two different tags read as two
+    # different dialogs, and ACK routing and CANCEL matching both come apart.
+    to_tag = f"inbound-{uuid.uuid4().hex[:12]}"
+
     # Register for cancellation *before* any DB/LiveKit work starts. Exotel sends CANCEL
     # (not BYE) when the caller hangs up before we answer, and inbound_listener.py can only
     # signal us via this registry — if registration happened later (as it used to, right
     # before the 200 OK), a CANCEL arriving during setup found nothing to signal and the
     # call got answered/dispatched anyway. The same event is reused after answer for BYE.
-    cancel_event = register_call_id(call_id)
+    try:
+        registration_key, cancel_event = register_call_id(call_id, peer_ip)
+    except (ValueError, DuplicateCallId) as e:
+        # A missing Call-ID, or one already held by a live call. Answering either would put two
+        # calls on one teardown signal, so refuse the INVITE and leave the existing call alone.
+        logger.warning(f"[INBOUND] Refusing INVITE call-id={call_id!r} from {peer_ip}: {e}")
+        writer.write(
+            _build_sip_response(
+                status_line="SIP/2.0 400 Bad Request",
+                call_id=call_id or "",
+                cseq=cseq,
+                from_header=from_header,
+                to_header=to_header,
+                via_headers=via_headers,
+            )
+        )
+        try:
+            await writer.drain()
+        except Exception:
+            pass
+        return
+
+    # Flipped once a 180 Ringing has gone out, so later responses know whether an early dialog
+    # exists and therefore whether they must carry the To-tag.
+    ringing_sent = False
 
     async def _reject(status_line: str, *, release: bool = False) -> None:
         """Send a SIP error/final response on the INVITE's own connection and clean up.
@@ -183,6 +167,10 @@ async def handle_inbound_call(
                 from_header=from_header,
                 to_header=to_header,
                 via_headers=via_headers,
+                # Only tag the response once we have actually established an early dialog with
+                # a 180; tagging a rejection sent before that would invent a dialog Exotel has
+                # never heard of.
+                to_tag=to_tag if ringing_sent else None,
             )
         )
         try:
@@ -190,8 +178,26 @@ async def handle_inbound_call(
         except Exception as drain_err:
             logger.debug(f"[INBOUND] writer.drain() during reject failed: {drain_err}")
         if release:
-            release_slot()
-        unregister_call_id(call_id)
+            release_slot(TELEPHONY)
+        unregister_call_id(registration_key)
+
+    # 100 Trying, immediately. Setup can take seconds (DB lookups, room creation, dispatch,
+    # then the bridge process starting), and until now Exotel saw an INVITE with no response at
+    # all for that whole window. Best-effort: failing to send it must not fail the call.
+    try:
+        writer.write(
+            _build_sip_response(
+                status_line="SIP/2.0 100 Trying",
+                call_id=call_id,
+                cseq=cseq,
+                from_header=from_header,
+                to_header=to_header,
+                via_headers=via_headers,
+            )
+        )
+        await writer.drain()
+    except Exception as e:
+        logger.warning(f"[INBOUND] Could not send 100 Trying for {call_id}: {e}")
 
     if not validate_config():
         logger.error("[INBOUND] Config validation failed")
@@ -262,7 +268,7 @@ async def handle_inbound_call(
         await _reject("SIP/2.0 487 Request Terminated")
         return
 
-    if not await try_reserve_slot():
+    if not await try_reserve_slot(TELEPHONY):
         logger.warning(
             f"[INBOUND] Slot cap reached — rejecting call-id={call_id} "
             f"caller={caller_number} dialed={normalized_number}"
@@ -272,7 +278,7 @@ async def handle_inbound_call(
 
     try:
         room_name = await livekit_service.create_room(assistant.assistant_id)
-        set_room_context(room_name)
+        set_room_context(room_name, global_fallback=False)
         logger.info(f"[INBOUND] SIP call_id={call_id} mapped to room={room_name}")
     except Exception as e:
         logger.error(f"[INBOUND] Failed to create room: {e}")
@@ -302,7 +308,7 @@ async def handle_inbound_call(
         return
 
     # Release in-memory reservation; CallRecord (status="initiated") now tracked via DB.
-    release_slot()
+    release_slot(TELEPHONY)
 
     if cancel_event.is_set():
         logger.info(f"[INBOUND] Caller cancelled before setup — call-id={call_id}")
@@ -310,7 +316,15 @@ async def handle_inbound_call(
         return
 
     pool = get_port_pool()
-    port = pool.acquire()
+    try:
+        port = pool.acquire()
+    except RuntimeError as e:
+        # Pool exhaustion used to escape this coroutine entirely (it ran as a bare task), so
+        # the INVITE got no SIP response at all and the caller heard dead air until Exotel
+        # timed out. Answer properly instead.
+        logger.error(f"[INBOUND] No RTP port for call-id={call_id}: {e}")
+        await _reject("SIP/2.0 486 Busy Here")
+        return
     logger.info(
         f"[INBOUND] call-id={call_id} phone={normalized_number} room={room_name} rtp_port={port}"
     )
@@ -342,24 +356,19 @@ async def handle_inbound_call(
         pool.release(port)
         return
 
-    # Nothing here confirms the dispatched agent ever actually joins and runs — this
-    # watches the CallRecord and force-ends the call if it doesn't, instead of leaving it
-    # silently occupying the line under load. Same watchdog used for outbound calls.
-    # already_answered=True: inbound calls never write call_status="answered" (the 200 OK
-    # about to be sent below *is* the answer, tracked only on the SIP side).
-    asyncio.create_task(
-        _watch_agent_join(room_name, assistant.assistant_id, already_answered=True)
-    )
-
     # Reuse the event registered at the top of this function — it now also carries
-    # inbound BYE detection (post-answer) for _run_inbound_bridge.
+    # inbound BYE detection (post-answer) for the bridge process.
     inbound_bye = cancel_event
 
-    # Bind RTP socket now so the port is in the 200 OK SDP before the bridge thread starts.
-    rtp_bridge = RTPMediaBridge(public_ip=EXOTEL_MEDIA_IP, bind_port=port)
+    token = (
+        AccessToken(LK_API_KEY, LK_API_SECRET)
+        .with_identity(f"sip-in-{normalized_number}-{uuid.uuid4().hex[:6]}")
+        .with_metadata(json.dumps({"source": "exotel_bridge"}))
+        .with_grants(VideoGrants(room_join=True, room=room_name))
+        .with_sip_grants(SIPGrants(admin=True, call=True))
+        .to_jwt()
+    )
 
-    # Build and send 200 OK — Exotel starts sending RTP after this.
-    # OS UDP socket buffer (~1 MB) holds early packets until start_inbound registers the reader.
     def build_200_ok() -> bytes:
         sdp = (
             f"v=0\r\n"
@@ -381,7 +390,7 @@ async def handle_inbound_call(
         for rr in record_routes:
             h.append(f"Record-Route: {rr}")
         h.append(f"From: {from_header}")
-        h.append(f"To: {to_header};tag=inbound-{port}-{uuid.uuid4().hex[:4]}")
+        h.append(f"To: {to_header};tag={to_tag}")
         h.append(f"Call-ID: {call_id}")
         h.append(f"CSeq: {cseq}")
         h.append("Supported: 100rel, timer, replaces")
@@ -393,45 +402,174 @@ async def handle_inbound_call(
         h.append(f"Content-Length: {len(sdp.encode())}")
         return ("\r\n".join(h) + "\r\n\r\n" + sdp).encode()
 
+    # ── Phase 2: media bridge runs in its own OS process ─────────────────────
+    # It was a thread per call inside this process. See inbound_worker.py for why that stopped
+    # working at load. The process binds the RTP socket and reports back before we answer, so
+    # Exotel never sends RTP at a port nothing is listening on.
+    ctx = get_bridge_context()
+    ready_queue = ctx.Queue()
+    answered_event = ctx.Event()
+
+    bridge_process = ctx.Process(
+        target=inbound_bridge_subprocess_entry,
+        args=(room_name, port, remote_ip, remote_port, pt, token,
+              ready_queue, answered_event, inbound_bye),
+        daemon=True,
+        name=f"bridge-in-{normalized_number}",
+    )
+    bridge_process.start()
+
+    async def _abandon(status_line: str) -> None:
+        """Give up before answering: kill the bridge, reply, and hand the port back."""
+        _terminate_bridge(bridge_process)
+        # Reap before releasing: SIGTERM is asynchronous, and the port must not go back into
+        # the pool while the dying process still holds its RTP socket open.
+        await asyncio.to_thread(_reap_bridge, bridge_process)
+        await _reject(status_line)
+        pool.release(port)
+        # Clean up the LiveKit room and stop the dispatched agent. The agent was already
+        # dispatched (the job is queued or running), so we must terminate it or it leaks.
+        try:
+            await livekit_service.end_call(room_name=room_name, assistant_id=assistant.assistant_id)
+        except Exception as e:
+            logger.warning(f"[INBOUND] Failed to end call record on abandon: {e}")
+        try:
+            await livekit_service.delete_room(room_name=room_name)
+        except Exception as e:
+            logger.warning(f"[INBOUND] Failed to delete room on abandon: {e}")
+
+    # Phase one: wait for the bridge to bind RTP and join the room.
+    if not await _wait_for_event(ready_queue, bridge_process, "media_ready", MEDIA_READY_TIMEOUT):
+        logger.error(f"[INBOUND] Bridge process never became ready — call-id={call_id}")
+        await _abandon("SIP/2.0 503 Service Unavailable")
+        return
+
+    if cancel_event.is_set():
+        logger.info(f"[INBOUND] Caller cancelled before answer — call-id={call_id}")
+        await _abandon("SIP/2.0 487 Request Terminated")
+        return
+
+    # Phase two: ring until the agent is ready to speak.
+    #
+    # The platform used to answer here, as soon as the media path was up, and the caller then
+    # sat through everything the agent still had to do — the inbound-context webhook (up to
+    # 10s), tool loading, session.start() — as dead air. Outbound never had this problem
+    # because the agent boots while the phone rings. This gives inbound the same shape.
+    if RING_UNTIL_AGENT_READY:
+        # A bare 180: no Require: 100rel and no RSeq, so Exotel must not send PRACK — nothing
+        # in this codebase would answer one.
+        logger.info(f"[INBOUND] Sending 180 Ringing, waiting up to {MAX_RING_SECONDS}s for agent")
+        writer.write(
+            _build_sip_response(
+                status_line="SIP/2.0 180 Ringing",
+                call_id=call_id,
+                cseq=cseq,
+                from_header=from_header,
+                to_header=to_header,
+                via_headers=via_headers,
+                to_tag=to_tag,
+            )
+        )
+        await writer.drain()
+        ringing_sent = True
+
+        agent_ready = await _wait_for_event(
+            ready_queue, bridge_process, "agent_ready", MAX_RING_SECONDS,
+            cancel_event=cancel_event,
+        )
+        if cancel_event.is_set():
+            logger.info(f"[INBOUND] Caller hung up while ringing — call-id={call_id}")
+            await _abandon("SIP/2.0 487 Request Terminated")
+            return
+        if not agent_ready:
+            # Answer anyway. A caller who has been ringing this long is better served by a
+            # slightly late greeting than by being dropped.
+            logger.warning(
+                f"[INBOUND] Agent not ready after {MAX_RING_SECONDS}s — answering anyway "
+                f"| call-id={call_id}"
+            )
+
     logger.info("[INBOUND] Sending 200 OK ->")
     writer.write(build_200_ok())
     await writer.drain()
+    answered_event.set()
 
-    # ── Phase 2: Bridge runs in its own thread + event loop ──────────────────
-    # Each bridge is isolated; no cross-call event-loop contention.
-    bridge_done = asyncio.Event()
-    main_loop = asyncio.get_running_loop()
-
-    token = (
-        AccessToken(LK_API_KEY, LK_API_SECRET)
-        .with_identity(f"sip-in-{normalized_number}")
-        .with_metadata(json.dumps({"source": "exotel_bridge"}))
-        .with_grants(VideoGrants(room_join=True, room=room_name))
-        .with_sip_grants(SIPGrants(admin=True, call=True))
-        .to_jwt()
+    # Armed only now. It force-ends a call whose agent never arrives, counting from the answer
+    # — so while the call was still ringing there was nothing for it to measure. Arming it
+    # before the 200 OK (as it used to be) meant its 15s grace ran during the ring and killed
+    # healthy calls.
+    asyncio.create_task(
+        _watch_agent_join(room_name, assistant.assistant_id, already_answered=True)
     )
 
-    def _bridge_thread():
+    # Hand the process off to a monitor and return, so this call stops occupying an INVITE
+    # setup slot for its whole duration.
+    asyncio.create_task(
+        _monitor_inbound_bridge(bridge_process, port, registration_key, room_name)
+    )
+
+
+async def _wait_for_event(
+    ready_queue,
+    bridge_process,
+    wanted: str,
+    timeout: float,
+    cancel_event=None,
+) -> bool:
+    """Wait for one named event from the bridge process.
+
+    The bridge reports its progress as a sequence of events on one queue — `media_ready` when
+    the RTP socket is bound and the room joined, then `agent_ready` when the agent turns up.
+    Events other than the one being waited for are skipped rather than dropped on the floor, so
+    an early `agent_ready` cannot be lost.
+
+    Returns False on timeout, on the bridge dying, on an explicit `failed` event, or as soon as
+    `cancel_event` fires. The caller decides what each of those means; this only reports.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        if cancel_event is not None and cancel_event.is_set():
+            return False
         try:
-            asyncio.run(_run_inbound_bridge(
-                rtp_bridge=rtp_bridge,
-                room_name=room_name,
-                port=port,
-                remote_ip=remote_ip,
-                remote_port=remote_port,
-                pt=pt,
-                call_id=call_id,
-                inbound_bye=inbound_bye,
-                token=token,
-            ))
-        finally:
-            main_loop.call_soon_threadsafe(bridge_done.set)
+            message = ready_queue.get_nowait()
+        except _stdlib_queue.Empty:
+            if not bridge_process.is_alive():
+                logger.error(f"[INBOUND] Bridge process exited before signalling {wanted}")
+                return False
+            await asyncio.sleep(0.1)
+            continue
 
-    threading.Thread(
-        target=_bridge_thread,
-        daemon=True,
-        name=f"bridge-in-{call_id[:8]}",
-    ).start()
+        event = message.get("event")
+        if event == wanted:
+            return True
+        if event == "failed":
+            logger.error(f"[INBOUND] Bridge process failed to start: {message.get('error')}")
+            return False
+        logger.debug(f"[INBOUND] Ignoring bridge event {event!r} while waiting for {wanted!r}")
+    return False
 
-    await bridge_done.wait()
-    logger.info(f"[INBOUND] Bridge thread finished for call-id={call_id}")
+
+async def _monitor_inbound_bridge(
+    bridge_process, port: int, registration_key: str, room_name: str
+) -> None:
+    """Release the port and the registry entry however the bridge process ends."""
+    try:
+        while bridge_process.is_alive():
+            await asyncio.sleep(2.0)
+    finally:
+        # This runs in a bare task, so anything raising here would vanish as an unretrieved
+        # task exception and strand the port and the registry entry. Each step stands alone.
+        try:
+            await asyncio.to_thread(_reap_bridge, bridge_process)
+        except Exception as e:
+            logger.warning(f"[INBOUND] Reaping bridge process failed: {e}")
+        try:
+            get_port_pool().release(port)
+        except Exception as e:
+            logger.error(f"[INBOUND] Releasing port {port} failed: {e}", exc_info=True)
+        try:
+            unregister_call_id(registration_key)
+        except Exception as e:
+            logger.warning(f"[INBOUND] Unregistering {registration_key} failed: {e}")
+        logger.info(f"[INBOUND] Bridge finished room={room_name}, port {port} released")

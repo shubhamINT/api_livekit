@@ -1,0 +1,58 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "amazon-bedrock/minimax.minimax-m2.5",
+  "provider": {
+    "amazon-bedrock": {
+      "options": {
+        "region": "{env:AWS_REGION_OPENCODE}",
+        "accessKeyId": "{env:AWS_ACCESS_KEY_ID_OPENCODE}",
+        "secretAccessKey": "{env:AWS_SECRET_ACCESS_KEY_OPENCODE}"
+      },
+      "models": {
+        "qwen.qwen3-coder-480b-a35b-v1:0": {
+          "name": "Qwen3 Coder 480B",
+          "tool_call": true,
+          "reasoning": true,
+          "attachment": true,
+          "limit": {
+            "context": 262144,
+            "output": 16384
+          }
+        },
+
+        "qwen.qwen3-32b-v1:0": {
+          "name": "Qwen3 32B",
+          "tool_call": true,
+          "reasoning": true,
+          "attachment": true,
+          "limit": {
+            "context": 131072,
+            "output": 16384
+          }
+        },
+
+        "deepseek.v3.2": {
+          "name": "DeepSeek V3.2",
+          "tool_call": true,
+          "reasoning": true,
+          "attachment": true,
+          "limit": {
+            "context": 262144,
+            "output": 16384
+          }
+        },
+
+        "minimax.minimax-m2.5": {
+          "name": "MiniMax M2.5",
+          "tool_call": true,
+          "reasoning": true,
+          "attachment": true,
+          "limit": {
+            "context": 262144,
+            "output": 16384
+          }
+        }
+      }
+    }
+  }
+}

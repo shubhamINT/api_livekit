@@ -75,8 +75,31 @@ class Settings:
         # Backend URL
         self.BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
-        # Max Concurrent jobs (Number of concurrent calls)
+        # ── Concurrency caps ────────────────────────────────────────────────────────
+        # Split by call type because the types cost wildly different amounts. A phone call
+        # needs an agent job process, a bridge process and an RTP port; a web call needs only
+        # the agent job, and a text-only web call has no TTS, STT or VAD at all. One shared
+        # counter meant a burst of web sessions could give phone callers a busy tone.
+        #
+        # MAX_CONCURRENT_JOBS keeps its name and its meaning as the telephony cap, so existing
+        # deployments that set it keep the behaviour they tuned for.
         self.MAX_CONCURRENT_JOBS = int(os.getenv("MAX_CONCURRENT_JOBS", "12"))
+        self.MAX_CONCURRENT_WEB_CALLS = int(os.getenv("MAX_CONCURRENT_WEB_CALLS", "40"))
+
+        # Hard ceiling across every call type, so the two caps above can never together
+        # exceed what the agent host can hold.
+        #
+        # NOT VERIFIED against a measured agent-session footprint — the only figure we have is
+        # a ~238 MiB import floor per job process, before audio buffers, model state and
+        # provider connections. Run a load test, read the agent container's steady-state RSS
+        # per session with `docker stats`, and raise these with evidence.
+        self.MAX_CONCURRENT_SESSIONS = int(os.getenv("MAX_CONCURRENT_SESSIONS", "48"))
+
+        # How many inbound INVITEs may be in setup at once. This is not a cap on live inbound
+        # calls — the setup slot is released as soon as the call is answered. It has to exceed
+        # the number of calls that can be ringing simultaneously, because the ring-until-ready
+        # wait happens inside this semaphore.
+        self.MAX_CONCURRENT_INVITE_SETUPS = int(os.getenv("MAX_CONCURRENT_INVITE_SETUPS", "24"))
 
         # End-of-call webhook. Read timeout is generous on purpose: the receiver often
         # writes the payload to its own database before answering, and a slow answer is

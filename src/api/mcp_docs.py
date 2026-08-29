@@ -14,6 +14,7 @@ from pathlib import Path
 from mcp.server import MCPServer
 
 from src.core.logger import logger
+from src.core.version import __version__
 
 DOCS_DIR = Path(__file__).resolve().parents[2] / "docs"
 
@@ -33,6 +34,13 @@ def _title_of(text: str, relpath: str) -> str:
     return relpath
 
 
+# Pages that are documentation of the project's history rather than of its behaviour. They are
+# excluded from the index because they mention every feature at once, so they outrank the specific
+# page for almost any query — an agent asked how to check queue status should be handed
+# api/calls/queue-status.md, not a release note that happens to mention queues.
+_NOT_REFERENCE = frozenset({"changelog.md"})
+
+
 def _load_index() -> dict[str, tuple[str, str]]:
     """Map of ``relative/path.md`` -> ``(title, full markdown)``."""
     global _index
@@ -41,6 +49,8 @@ def _load_index() -> dict[str, tuple[str, str]]:
 
     index: dict[str, tuple[str, str]] = {}
     for path in sorted(DOCS_DIR.rglob("*.md")):
+        if path.relative_to(DOCS_DIR).as_posix() in _NOT_REFERENCE:
+            continue
         try:
             text = path.read_text(encoding="utf-8")
         except OSError as exc:
@@ -97,7 +107,7 @@ mcp = MCPServer(
         "pages, then get_doc to read one in full. Answer only from what these "
         "tools return — never guess endpoint paths, field names or payload shapes."
     ),
-    version="1.0.0",
+    version=__version__,
 )
 
 

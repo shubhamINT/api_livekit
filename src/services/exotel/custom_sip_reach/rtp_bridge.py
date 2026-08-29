@@ -140,6 +140,7 @@ class RTPMediaBridge:
         self._rx = 0
         self._tx = 0
         self._first_rx = False
+        self._logged_early_rtp = False
         self._first_tx = False
         self._last_rx_ts: float | None = None
 
@@ -241,9 +242,20 @@ class RTPMediaBridge:
         """Called by event loop when UDP socket has data. Works with uvloop."""
         try:
             data, addr = self._sock.recvfrom(4096)
-            # DROP packets from unknown sources — prevents stale/foreign RTP
-            # from a prior call (port reuse) leaking audio into the wrong room.
-            if self._remote_addr and addr != self._remote_addr:
+            # DROP packets from any source that is not the endpoint the SDP negotiated. This
+            # used to allow packets through while _remote_addr was still None, and _recv_loop
+            # then adopted the first sender as the peer — so RTP still in flight from a call
+            # that had just released this port could be latched onto as the new call's peer,
+            # which is how one caller ended up hearing another. Every code path sets the
+            # endpoint from the SDP answer/offer before media starts, so there is nothing
+            # legitimate to learn from the wire.
+            if addr != self._remote_addr:
+                if self._remote_addr is None and not self._logged_early_rtp:
+                    self._logged_early_rtp = True
+                    logger.warning(
+                        f"[RTP] Dropping RTP from {addr} on port {self.local_port} — "
+                        "no negotiated endpoint yet"
+                    )
                 return
             try:
                 self._recv_queue.put_nowait((data, addr))
@@ -276,10 +288,6 @@ class RTPMediaBridge:
                 continue
 
             if not self._first_rx:
-                # Lock onto first sender if remote not yet set (inbound flow)
-                if not self._remote_addr:
-                    self._remote_addr = addr
-                    logger.info(f"[RTP] Auto-learned remote endpoint: {addr}")
                 logger.info(f"[RTP] ✅ First inbound RTP from {addr} ({len(data)} B)")
                 self._first_rx = True
 
@@ -293,12 +301,12 @@ class RTPMediaBridge:
             payload = data[RTP_HEADER_SIZE:]
 
             try:
-                # Decode in thread pool so the event loop can schedule other coroutines.
-                # sosfilt returns a new zi array (no in-place mutation) so passing self._hp_zi
-                # to the thread is safe — no shared-state race with the next packet.
-                pcm48, self._hp_zi = await asyncio.to_thread(
-                    _decode_rtp_payload, payload, pt, self._hp_zi
-                )
+                # Decoded inline, not via asyncio.to_thread. The decode costs ~2 ms per 50 ms of
+                # audio, so the thread hop cost more than the work it offloaded — and because
+                # every bridge ran its own event loop, each one also brought up its own default
+                # ThreadPoolExecutor (min(32, cpu+4) threads). At a dozen concurrent calls that
+                # was hundreds of threads contending for the GIL to do microseconds of work each.
+                pcm48, self._hp_zi = _decode_rtp_payload(payload, pt, self._hp_zi)
                 if not pcm48:
                     continue
                 frame = rtc.AudioFrame(

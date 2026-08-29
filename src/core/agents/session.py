@@ -976,6 +976,26 @@ async def entrypoint(ctx: JobContext):
     # worker overload); this timestamp is the thing that tells the difference.
     await livekit_services.mark_agent_ready(room_name)
 
+    # Tell the SIP bridge the same thing over the room's data channel, so an inbound call can
+    # ring until this point instead of answering into silence.
+    #
+    # This spot is chosen deliberately: it is after the inbound-context webhook (which can take
+    # up to 10s), after tool loading, after TTS prewarm and after session.start() — so it means
+    # both halves of "ready", the agent is up *and* the webhook has already answered.
+    #
+    # The bridge is the only listener and it treats this as advisory: if the publish fails, or
+    # an older agent build never sends it, the bridge falls back to the agent's audio track
+    # appearing and then to its own ring deadline. So a failure here delays an answer, it never
+    # blocks one.
+    try:
+        await ctx.room.local_participant.publish_data(
+            json.dumps({"event": "agent_ready"}).encode(),
+            topic="sip_bridge_events",
+        )
+        logger.info("Published agent_ready to sip_bridge_events")
+    except Exception as e:
+        logger.warning(f"Could not publish agent_ready (call proceeds regardless): {e}")
+
     @session.on("user_state_changed")
     def on_user_state_changed(event):
         nonlocal user_is_speaking
@@ -1267,6 +1287,22 @@ async def entrypoint(ctx: JobContext):
         )
 
 
+def _worker_load(worker) -> float:
+    """Report this worker's load as a fraction of the jobs it is willing to run.
+
+    The SDK default measures CPU across the whole machine. That made job intake depend on
+    whatever else the host was doing: when the SIP dispatcher spiked CPU launching bridge
+    processes, this worker quietly stopped accepting jobs, so calls connected with no agent
+    behind them and the caller heard nothing. Counting our own jobs keeps the decision local
+    and predictable.
+    """
+    # Measured against the global ceiling, not the telephony cap: this worker runs the agent
+    # job for *every* call type — phone, web and passthrough — so the telephony cap alone would
+    # make it refuse web jobs it has ample room for.
+    max_jobs = max(1, settings.MAX_CONCURRENT_SESSIONS)
+    return min(1.0, len(worker.active_jobs) / max_jobs)
+
+
 if __name__ == "__main__":
     cli.run_app(
         WorkerOptions(
@@ -1274,9 +1310,20 @@ if __name__ == "__main__":
             api_secret=settings.LIVEKIT_API_SECRET,
             ws_url=settings.LIVEKIT_URL,
             job_memory_warn_mb=1024,
+            # A hard ceiling, not just a warning. Only job_memory_warn_mb was set before, which
+            # logs and does nothing, so a leaking session grew until the container OOMed and
+            # took every call running alongside it down with it.
+            job_memory_limit_mb=2048,
             entrypoint_fnc=entrypoint,
             agent_name="api-agent",
-            num_idle_processes=2,
-            load_threshold=0.65,  # stop accepting new jobs at 65% CPU (default dev=inf)
+            # Raised from 2: at a dozen simultaneous calls, jobs past the second one queued
+            # behind a cold process start each.
+            num_idle_processes=4,
+            load_fnc=_worker_load,
+            # The SDK refuses a job when load >= threshold, so 1.0 means "refuse once we are
+            # already running MAX_CONCURRENT_JOBS". Anything lower would make the worker refuse
+            # jobs the dispatcher is still willing to send, and a dispatched call with no agent
+            # behind it is a call that connects to silence.
+            load_threshold=1.0,
         )
     )

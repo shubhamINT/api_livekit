@@ -25,6 +25,7 @@ from src.api.routes import (
 from starlette.routing import Route
 from src.api.mcp_docs import asgi_app as docs_mcp_asgi, mcp as docs_mcp
 from src.core.logger import setup_logging, logger
+from src.core.version import __version__
 from src.core.db.database import init_db, close_db
 from src.api.models.response_models import apiResponse
 
@@ -67,7 +68,7 @@ async def lifespan(app: FastAPI):
     await close_db()
 
 
-app = FastAPI(title="LiveKit AI Backend", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="LiveKit AI Backend", version=__version__, lifespan=lifespan)
 
 
 @app.exception_handler(RequestValidationError)

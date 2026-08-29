@@ -257,6 +257,13 @@ class CallRecord(Document):
             IndexModel([("created_by_email", 1), ("assistant_id", 1), ("started_at", -1)]),
             IndexModel([("created_by_email", 1), ("to_number", 1), ("started_at", -1)]),
             IndexModel([("started_at", -1)]),
+            # Serves the live-session count the concurrency caps run on every inbound INVITE
+            # and every web-call request. call_status leads because live calls are a tiny
+            # fraction of history, so it is by far the more selective predicate; call_type
+            # then lets the same index answer the per-type counts without a second scan.
+            # Without this the count was a full collection scan that grew with total call
+            # history rather than with the number of calls actually in progress.
+            IndexModel([("call_status", 1), ("call_type", 1)]),
         ]
 
 

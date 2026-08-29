@@ -13,6 +13,7 @@ import threading
 
 from .config import EXOTEL_CUSTOMER_SIP_PORT, EXOTEL_SIP_ALLOWED_IPS, INBOUND_SIP_LISTEN
 from .sip_client import ExotelSipClient
+from src.core.config import settings
 from src.core.logger import logger
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -33,12 +34,46 @@ _registry_lock = threading.Lock()
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def register_call_id(call_id: str) -> multiprocessing.synchronize.Event:
-    """Register a call-ID and return a multiprocessing.Event that fires on inbound BYE."""
-    event = multiprocessing.Event()
+class DuplicateCallId(Exception):
+    """Raised when an INVITE reuses a Call-ID that already has a live registration."""
+
+
+def registry_key(call_id: str | None, peer_ip: str | None = None) -> str:
+    """Build the registry key for a call.
+
+    Inbound Call-IDs come straight off the wire, so they are namespaced by the sending IP and
+    a missing one is rejected rather than silently collapsing every malformed INVITE onto the
+    same key. Outbound generates its own UUID and passes no peer_ip, keeping those keys as they
+    were.
+    """
+    if not call_id:
+        raise ValueError("SIP INVITE has no Call-ID")
+    return f"{peer_ip}|{call_id}" if peer_ip else call_id
+
+
+def register_call_id(
+    call_id: str, peer_ip: str | None = None
+) -> tuple[str, multiprocessing.synchronize.Event]:
+    """Register a call and return (key, Event) where the Event fires on inbound BYE/CANCEL.
+
+    Raises DuplicateCallId if the key is already live. This used to overwrite: a retransmitted
+    or duplicated Call-ID replaced the first call's Event, so that call's BYE could never reach
+    it (it ran on until an RTP-silence timeout, holding its port), while the first call's
+    teardown deleted the *second* call's registration.
+    """
+    key = registry_key(call_id, peer_ip)
+    # The Event is handed to the bridge process, so it must come from the same multiprocessing
+    # context that launches it. A default-context Event passed to a forkserver/spawn child
+    # fails outright: "A SemLock created in a fork context is being shared with a process in a
+    # spawn context."
+    from src.services.outbound_dispatcher.dispatcher import get_bridge_context
+
+    event = get_bridge_context().Event()
     with _registry_lock:
-        _call_registry[call_id] = event
-    return event
+        if key in _call_registry:
+            raise DuplicateCallId(key)
+        _call_registry[key] = event
+    return key, event
 
 
 def register_call_id_with_event(call_id: str, event: multiprocessing.synchronize.Event) -> None:
@@ -51,10 +86,38 @@ def register_call_id_with_event(call_id: str, event: multiprocessing.synchronize
         _call_registry[call_id] = event
 
 
-def unregister_call_id(call_id: str):
-    """Remove a call-ID from the registry."""
+def _lookup_event(call_id: str | None, peer_ip: str | None):
+    """Find the Event for an in-dialog request (BYE/CANCEL).
+
+    Tries the exact key first. Exotel may send BYE from a different node than the INVITE came
+    from, so it falls back to matching on Call-ID alone — but only when that is unambiguous.
+    Firing on an ambiguous match would tear down the wrong call, which is worse than letting
+    the RTP-silence watchdog end this one.
+    """
+    if not call_id:
+        return None
     with _registry_lock:
-        _call_registry.pop(call_id, None)
+        exact = _call_registry.get(registry_key(call_id, peer_ip))
+        if exact is not None:
+            return exact
+        matches = [
+            evt for key, evt in _call_registry.items()
+            if key == call_id or key.endswith(f"|{call_id}")
+        ]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        logger.warning(
+            f"[SIP-IN] Ambiguous Call-ID {call_id!r} matches {len(matches)} live calls — "
+            "ignoring rather than tearing down the wrong one"
+        )
+    return None
+
+
+def unregister_call_id(key: str):
+    """Remove a registration. Takes the key returned by register_call_id()."""
+    with _registry_lock:
+        _call_registry.pop(key, None)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -85,6 +148,63 @@ async def ensure_inbound_server():
 # ─────────────────────────────────────────────────────────────────────────────
 # Connection handler
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+# Bounds how many INVITEs may be in setup at once. Without this every INVITE became a bare
+# task, so a burst all reached the concurrency gate before any of them had incremented it and
+# they all passed — the 486 Busy Here gate was softest under exactly the burst it exists for.
+#
+# This is not a cap on live inbound calls: the slot is released as soon as the call is
+# answered. It does have to exceed the number of calls that can be ringing at once, because
+# the ring-until-agent-ready wait happens inside it — see inbound_bridge.MAX_RING_SECONDS.
+_invite_semaphore: asyncio.Semaphore | None = None
+_invite_tasks: set[asyncio.Task] = set()
+
+
+def _get_invite_semaphore() -> asyncio.Semaphore:
+    global _invite_semaphore
+    if _invite_semaphore is None:
+        _invite_semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_INVITE_SETUPS)
+    return _invite_semaphore
+
+
+async def _run_invite(*, handler, peer_ip, call_id, cseq, from_header, to_header,
+                      via_headers, record_routes, sdp_body, writer) -> None:
+    """Run one INVITE through setup, guaranteeing a SIP final response on any failure."""
+    try:
+        async with _get_invite_semaphore():
+            await handler(
+                sdp_body=sdp_body,
+                writer=writer,
+                from_header=from_header,
+                to_header=to_header,
+                call_id=call_id,
+                cseq=cseq,
+                via_headers=via_headers,
+                record_routes=record_routes,
+                peer_ip=peer_ip,
+            )
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.error(
+            f"[SIP-IN] INVITE setup failed call-id={call_id}: {e}", exc_info=True
+        )
+        try:
+            from .inbound_bridge import _build_sip_response
+            writer.write(
+                _build_sip_response(
+                    status_line="SIP/2.0 500 Server Internal Error",
+                    call_id=call_id or "",
+                    cseq=cseq,
+                    from_header=from_header,
+                    to_header=to_header,
+                    via_headers=via_headers,
+                )
+            )
+            await writer.drain()
+        except Exception as reply_err:
+            logger.warning(f"[SIP-IN] Could not send 500 for {call_id}: {reply_err}")
 
 
 async def _handle_inbound_sip(
@@ -140,8 +260,7 @@ async def _handle_inbound_sip(
                 if start.startswith("BYE "):
                     call_id = hdrs.get("call-id")
                     logger.info(f"[SIP-IN] ← BYE from {peer} call-id={call_id}")
-                    with _registry_lock:
-                        evt = _call_registry.get(call_id)
+                    evt = _lookup_event(call_id, peer[0] if peer else None)
                     if evt:
                         evt.set()
                     writer.write(ExotelSipClient._response_200_ok(hdrs, via_headers=via_headers))
@@ -156,8 +275,7 @@ async def _handle_inbound_sip(
                     # same cross-connection signal already used for BYE.
                     call_id = hdrs.get("call-id")
                     logger.info(f"[SIP-IN] ← CANCEL from {peer} call-id={call_id}")
-                    with _registry_lock:
-                        evt = _call_registry.get(call_id)
+                    evt = _lookup_event(call_id, peer[0] if peer else None)
                     if evt:
                         evt.set()
                     writer.write(ExotelSipClient._response_200_ok(hdrs, via_headers=via_headers))
@@ -171,8 +289,12 @@ async def _handle_inbound_sip(
                     call_id = hdrs.get("call-id")
                     logger.info(f"[SIP-IN] ← INVITE from {peer} call-id={call_id}")
                     from .inbound_bridge import handle_inbound_call
-                    asyncio.create_task(
-                        handle_inbound_call(
+                    # Kept in _invite_tasks so the task isn't garbage collected mid-setup and
+                    # so a crash surfaces here instead of as a bare "Task exception was never
+                    # retrieved" at GC time, which is what used to happen — leaving the INVITE
+                    # with no SIP response at all and the caller listening to dead air.
+                    task = asyncio.create_task(
+                        _run_invite(
                             sdp_body=body,
                             writer=writer,
                             from_header=hdrs.get("from", ""),
@@ -181,8 +303,12 @@ async def _handle_inbound_sip(
                             cseq=hdrs.get("cseq", ""),
                             via_headers=via_headers,
                             record_routes=record_routes,
+                            peer_ip=peer[0] if peer else None,
+                            handler=handle_inbound_call,
                         )
                     )
+                    _invite_tasks.add(task)
+                    task.add_done_callback(_invite_tasks.discard)
                 elif start.startswith("ACK "):
                     call_id = hdrs.get("call-id")
                     logger.info(f"[SIP-IN] ← ACK from {peer} call-id={call_id}")

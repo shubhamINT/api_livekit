@@ -81,6 +81,9 @@ async def run_bridge(
     sip_client = None
     inbound_bye = None
     owns_inbound_bye = inbound_bye_event is None
+    # Hoisted above the try: the finally block reads it, and an exception raised before the
+    # registration would otherwise turn into a NameError inside cleanup.
+    registration_key: str | None = None
     ended_by_remote_bye = False
     _result_sent = False
     room = rtc.Room()
@@ -111,7 +114,7 @@ async def run_bridge(
         if inbound_bye_event is not None:
             inbound_bye = inbound_bye_event
         else:
-            inbound_bye = register_call_id(sip_client.call_id)
+            registration_key, inbound_bye = register_call_id(sip_client.call_id)
 
         # Hold/resume detection via SIP re-INVITE
         async def _on_hold_change(is_hold: bool):
@@ -368,8 +371,8 @@ async def run_bridge(
             pool.release(port)
             logger.info(f"[BRIDGE] Port {port} released")
 
-        if owns_inbound_bye and sip_client:
-            unregister_call_id(sip_client.call_id)
+        if owns_inbound_bye and registration_key:
+            unregister_call_id(registration_key)
 
 
 def _bridge_subprocess_entry(

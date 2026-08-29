@@ -44,15 +44,21 @@ LK_API_SECRET = os.getenv("LIVEKIT_API_SECRET")
 # RTP / Codec Constants
 # ─────────────────────────────────────────────────────────────────────────────
 
-# RTP Port pool — MUST be outside LiveKit SIP's range (10000-40000) and LiveKit RTC's range (50000-60000).
-# Safe range: 41000-49999. Open these in your AWS Security Group for UDP.
-# Each concurrent call uses 2 ports (RTP + RTCP).
+# RTP port pool — MUST stay outside LiveKit SIP's range (10000-40000) and LiveKit RTC's range
+# (50000-60000), or a bridge and LiveKit can end up bound to the same UDP port and audio goes
+# to the wrong place. Safe range: 41000-49999. Open the range in your AWS Security Group for
+# UDP before changing it here — the ports are useless if the firewall drops them.
+#
+# The pool steps by 2 (port+1 is reserved for RTCP), so the range below gives
+# (END - START) / 2 concurrent calls: 41000-42000 is 500.
+#
+# Both spellings are read for backwards compatibility; SIP_BRIDGE_PORT_RANGE_* wins if set.
 RTP_PORT_START = int(
-    os.getenv("SIP_BRIDGE_PORT_RANGE_START", os.getenv("RTP_PORT_START", "31000"))
+    os.getenv("SIP_BRIDGE_PORT_RANGE_START", os.getenv("RTP_PORT_START", "41000"))
 )
 RTP_PORT_END = int(
-    os.getenv("SIP_BRIDGE_PORT_RANGE_END", os.getenv("RTP_PORT_END", "31100"))
-)  # 50 simultaneous calls max
+    os.getenv("SIP_BRIDGE_PORT_RANGE_END", os.getenv("RTP_PORT_END", "42000"))
+)
 
 RTP_HEADER_SIZE = 12
 PCMU_PAYLOAD_TYPE = 0

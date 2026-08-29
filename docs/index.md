@@ -37,7 +37,7 @@ A production-ready backend for building and operating real-time voice AI agents 
 
 ```mermaid
 graph TD
-    Client[Client Application] -->|REST API| API[API Server\nFastAPI]
+    Client[Client Application] -->|REST API| API[API Server<br/>FastAPI]
     Client -->|WebRTC| LiveKit[LiveKit Server]
 
     API -->|CRUD| DB[(MongoDB)]

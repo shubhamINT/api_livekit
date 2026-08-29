@@ -112,7 +112,8 @@ entry is indistinguishable from a working one until a call goes silent — run
   - up to `12` concurrent active sessions (set by `MAX_CONCURRENT_JOBS`)
   - polls the queue every `2` seconds (fallback poll every `30s` when idle)
   - retries dispatch failures up to `3` times
-- Active-session protection also uses the worker load threshold in `src/core/agents/session.py` so the worker stops accepting new jobs around `65%` CPU load.
+- Active-session protection also uses the worker load threshold in `src/core/agents/session.py`: the worker counts its own active jobs and stops accepting new ones once it is running `MAX_CONCURRENT_SESSIONS`.
+- Caps are per call type: `MAX_CONCURRENT_JOBS` (telephony), `MAX_CONCURRENT_WEB_CALLS` (web), and `MAX_CONCURRENT_SESSIONS` as a hard ceiling across both. Web calls return `503` when their cap is reached; inbound phone calls get SIP `486 Busy Here`.
 
 ## Passthrough Mode (Web ↔ SIP, No AI Agent)
 

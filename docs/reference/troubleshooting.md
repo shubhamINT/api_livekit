@@ -278,6 +278,62 @@ A read timeout used to log a full `httpx` traceback, which is why old logs are f
 
 ---
 
+## Callers get a busy tone, or a web call gets 503
+
+Both mean a concurrency cap was reached. The caps are per call type, so the first thing to
+establish is *which* one.
+
+| Symptom | Cap | Setting |
+|---|---|---|
+| Inbound caller hears a busy tone (SIP `486 Busy Here`) | telephony, or the global ceiling | `MAX_CONCURRENT_JOBS`, `MAX_CONCURRENT_SESSIONS` |
+| `POST /get_token` returns `503` | web, or the global ceiling | `MAX_CONCURRENT_WEB_CALLS`, `MAX_CONCURRENT_SESSIONS` |
+| Inbound caller hears a busy tone with capacity to spare | RTP port pool exhausted | `SIP_BRIDGE_PORT_RANGE_START` / `_END` |
+
+The dispatcher logs which gate refused, so grep for `Slot refused`:
+
+```
+Slot refused (telephony): bucket cap reached (12/12)
+Slot refused (web): global ceiling reached (48/48)
+```
+
+A `486` with slots free points at the port pool instead — look for
+`No free RTP ports in <range>`. Note ports have a 30 second cooldown after release, so sustained
+call churn makes the usable pool smaller than the raw range.
+
+Rejected inbound calls are answered before the `CallRecord` is written, so **they leave no row in
+`call_records`** — the log line above is the only record that a caller was turned away.
+
+Before raising any cap, measure. `docker stats` on the agent container during a load test gives
+the steady-state memory per session, and that is what the ceiling should be derived from — the
+defaults are deliberately conservative rather than measured.
+
+---
+
+## An inbound caller hears silence after pickup
+
+Expected behaviour is: ringing, then the greeting. Silence *after* the ringing stops means the
+call was answered before the agent was ready.
+
+Check `INBOUND_RING_UNTIL_AGENT_READY` is not set to `false`. If it is on, look for this in the
+dispatcher log:
+
+```
+[INBOUND] Sending 180 Ringing, waiting up to 15s for agent
+[INBOUND] Agent not ready after 15s — answering anyway | call-id=...
+```
+
+The second line means the agent did not report readiness inside the deadline, so the platform
+answered rather than dropping the call. The usual cause is a slow inbound-context webhook — it
+blocks agent startup and its own timeout can be up to 10s, leaving little room. Either speed the
+webhook up, lower its `timeout_seconds`, or raise `INBOUND_MAX_RING_SECONDS`.
+
+If instead you see `Agent ready (audio track published)` rather than `Agent ready (agent_ready
+event)`, the agent container is running a build that predates the readiness signal. The fallback
+works, but it fires slightly earlier than the real signal — redeploy the agent to get the tighter
+timing.
+
+---
+
 ## Changing a model list
 
 Never from memory. OpenAI retires models on its own schedule and a stale entry is

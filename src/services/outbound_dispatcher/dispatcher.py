@@ -34,32 +34,83 @@ AGENT_JOIN_GRACE_SECONDS = 15
 
 livekit_services = LiveKitService()
 
+# Every bridge (inbound and outbound) is its own OS process. Under "spawn" each of those
+# re-imported the whole scientific stack from scratch — scipy.signal alone costs ~5 seconds of
+# CPU per import. At a dozen simultaneous calls that was over a minute of pure import work on a
+# 2-4 vCPU host, which starved the dispatcher's event loop, spiked host CPU past the agent
+# worker's load threshold (so it stopped accepting jobs), and pushed memory towards the OOM
+# killer, which is what cut calls mid-conversation.
+#
+# "forkserver" pays that cost once, in a server process, and every bridge forks from it warm.
+# The preload list deliberately excludes livekit.rtc: importing it starts the native FFI
+# callback thread, and forking a process with live native threads gives children a broken FFI.
+# The bridges import it themselves after the fork.
+_BRIDGE_PRELOAD = ["numpy", "scipy.signal", "audioop"]
+_bridge_context = None
+
+
+def get_bridge_context():
+    """Return the multiprocessing context used to launch bridge processes."""
+    global _bridge_context
+    if _bridge_context is None:
+        try:
+            ctx = multiprocessing.get_context("forkserver")
+            ctx.set_forkserver_preload(_BRIDGE_PRELOAD)
+            _bridge_context = ctx
+            logger.info("[Bridge] Using forkserver context (preloaded: %s)", _BRIDGE_PRELOAD)
+        except (ValueError, AttributeError) as e:
+            logger.warning(f"[Bridge] forkserver unavailable ({e}); falling back to spawn")
+            _bridge_context = multiprocessing.get_context("spawn")
+    return _bridge_context
+
+
+TELEPHONY = "telephony"
+WEB = "web"
+BUCKETS = (TELEPHONY, WEB)
+
+LIVE_CALL_STATUSES = ["initiated", "answered"]
+
+
+def bucket_for_call_type(call_type: str | None) -> str:
+    """Which capacity bucket a CallRecord belongs to.
+
+    Web calls need only an agent job process. Phone calls additionally need a bridge process
+    and an RTP port, so they are capped separately and much lower.
+
+    Passthrough is not a call_type — it is a boolean on an "outbound" row — so it lands in
+    telephony without a special case, which is correct: it holds a bridge and a port.
+    """
+    return WEB if call_type == "web" else TELEPHONY
+
+
+BUCKET_CAPS = {
+    TELEPHONY: lambda: settings.MAX_CONCURRENT_JOBS,
+    WEB: lambda: settings.MAX_CONCURRENT_WEB_CALLS,
+}
+
+
 _new_call_event = asyncio.Event()
 
-# In-memory reservation counter: tracks calls that are mid-dispatch
-# (room created but CallRecord not yet written). Prevents double-dispatch.
-_dispatching_count = 0
+# In-memory reservation counters, one per capacity bucket: calls that are mid-dispatch
+# (room created but CallRecord not yet written). Prevents double-dispatch. The reservation is a
+# short-lived handover token — once the CallRecord exists, counting comes from the DB.
+_dispatching_count: dict[str, int] = {bucket: 0 for bucket in BUCKETS}
 
 
-async def _fail_all_active_calls() -> None:
-    """On startup, immediately fail every initiated/answered call record.
+async def _fail_stale_calls_on_startup() -> None:
+    """On startup, clear out call records left behind by a previous instance.
 
-    These calls belong to agent processes that died with the previous server
-    instance. They will never complete, so fail them now to free concurrency slots.
+    This used to fail *every* initiated/answered record unconditionally. That was only safe
+    when the dispatcher was the sole owner of every live call — in the current split
+    deployment the agent containers outlive a dispatcher restart, so a restart (an OOM restart
+    included) cut every call that was in progress across the whole platform at once.
+
+    The orphan reaper already answers the right question, per record: does this call's LiveKit
+    room still exist? Records whose room is gone are genuinely dead and get failed; live calls
+    are left alone.
     """
-    now = datetime.now(timezone.utc)
-    stale = await CallRecord.find(
-        In(CallRecord.call_status, ["initiated", "answered"]),
-    ).to_list()
-    if stale:
-        for record in stale:
-            record.call_status = "failed"
-            record.call_status_reason = "Marked failed on server startup — agent process no longer running"
-            record.ended_at = now
-            await record.save()
-        logger.warning(
-            f"Startup cleanup: marked {len(stale)} call record(s) as failed"
-        )
+    logger.info("Startup cleanup: reaping calls whose LiveKit room no longer exists")
+    await _reap_orphaned_calls()
 
 
 async def _reap_orphaned_calls() -> None:
@@ -102,9 +153,13 @@ async def _recover_stuck_dispatching() -> None:
     or 'failed' once MAX_RETRIES is reached.
     """
     queue_cutoff = datetime.now(timezone.utc) - timedelta(minutes=STUCK_DISPATCHING_MINUTES)
+    # Filtered on when the item was *dispatched*, not when it was queued. Using queued_at meant
+    # any call that had waited longer than the cutoff in the queue became "stuck" the instant it
+    # was dispatched — so it was reset to pending and dialled a second time while its bridge
+    # process was still alive and ringing the first one.
     stuck = await OutboundCallQueue.find(
         OutboundCallQueue.status == "dispatching",
-        OutboundCallQueue.queued_at < queue_cutoff,
+        OutboundCallQueue.dispatched_at < queue_cutoff,
     ).to_list()
     if stuck:
         for item in stuck:
@@ -120,28 +175,61 @@ async def _recover_stuck_dispatching() -> None:
         )
 
 
+async def _get_active_session_counts() -> dict[str, int]:
+    """Live (initiated/answered) calls per bucket, plus mid-dispatch reservations.
+
+    One aggregation rather than a query per bucket. The count runs on every inbound INVITE and
+    every web-call request, so paying for N collection scans instead of one would be a real
+    regression — see the (call_status, call_type) index on CallRecord.
+    """
+    counts = {bucket: _dispatching_count[bucket] for bucket in BUCKETS}
+    pipeline = [
+        {"$match": {"call_status": {"$in": LIVE_CALL_STATUSES}}},
+        {"$group": {"_id": "$call_type", "n": {"$sum": 1}}},
+    ]
+    async for row in CallRecord.aggregate(pipeline):
+        counts[bucket_for_call_type(row.get("_id"))] += row.get("n", 0)
+    return counts
+
+
 async def _get_active_session_count() -> int:
-    """Count calls that are live (initiated/answered) PLUS any mid-dispatch reservations."""
-    db_active = await CallRecord.find(
-        In(CallRecord.call_status, ["initiated", "answered"])
-    ).count()
-    return db_active + _dispatching_count
+    """Total live sessions across every bucket."""
+    return sum((await _get_active_session_counts()).values())
 
 
-async def try_reserve_slot() -> bool:
-    """Atomically reserve a session slot if one is free. Returns True on success."""
-    global _dispatching_count
-    if await _get_active_session_count() >= settings.MAX_CONCURRENT_JOBS:
-        return False
-    _dispatching_count += 1
-    return True
+# Serialises the check-and-reserve below. Without it the `await` between counting active
+# sessions and incrementing the counter let concurrent callers all observe the same pre-burst
+# count and all pass — so a burst of inbound INVITEs sailed straight through the cap that
+# exists precisely for bursts.
+_slot_lock = asyncio.Lock()
 
 
-def release_slot() -> None:
+async def try_reserve_slot(bucket: str = TELEPHONY) -> bool:
+    """Atomically reserve a session slot in `bucket` if one is free.
+
+    Two gates: the bucket's own cap, and the global ceiling across all buckets so the caps
+    can never together exceed what the agent host can hold.
+    """
+    async with _slot_lock:
+        counts = await _get_active_session_counts()
+        if sum(counts.values()) >= settings.MAX_CONCURRENT_SESSIONS:
+            logger.info(
+                f"Slot refused ({bucket}): global ceiling reached "
+                f"({sum(counts.values())}/{settings.MAX_CONCURRENT_SESSIONS})"
+            )
+            return False
+        cap = BUCKET_CAPS[bucket]()
+        if counts[bucket] >= cap:
+            logger.info(f"Slot refused ({bucket}): bucket cap reached ({counts[bucket]}/{cap})")
+            return False
+        _dispatching_count[bucket] += 1
+        return True
+
+
+def release_slot(bucket: str = TELEPHONY) -> None:
     """Release a reservation taken by try_reserve_slot()."""
-    global _dispatching_count
-    if _dispatching_count > 0:
-        _dispatching_count -= 1
+    if _dispatching_count[bucket] > 0:
+        _dispatching_count[bucket] -= 1
 
 
 def _terminate_bridge(process: multiprocessing.Process) -> None:
@@ -153,11 +241,25 @@ def _terminate_bridge(process: multiprocessing.Process) -> None:
 
 
 def _reap_bridge(process: multiprocessing.Process) -> None:
-    """Join (reap) bridge subprocess to prevent zombie accumulation."""
+    """Join (reap) a bridge subprocess, escalating to SIGKILL if it will not exit.
+
+    A bridge that hangs during shutdown used to survive as a zombie holding its RTP socket, so
+    the port could not really be reused even after the pool handed it back.
+    """
     try:
         process.join(timeout=3)
-    except Exception:
-        pass
+        if process.is_alive():
+            logger.warning(
+                f"[Bridge] Process {process.name} (pid={process.pid}) ignored SIGTERM; killing"
+            )
+            process.kill()
+            process.join(timeout=3)
+            if process.is_alive():
+                logger.error(
+                    f"[Bridge] Process {process.name} (pid={process.pid}) survived SIGKILL"
+                )
+    except Exception as e:
+        logger.warning(f"[Bridge] Reaping {process.name} failed: {e}")
 
 
 async def _finalize_if_agent_failed(room_name: str, assistant_id: str | None) -> None:
@@ -403,7 +505,9 @@ async def _monitor_exotel_result(
     finally:
         # Reap zombie before releasing port — prevents the OS from keeping the
         # socket FD open in a zombie process while a new call tries to bind it.
-        _reap_bridge(bridge_process)
+        # Off the loop: the reap blocks on join() and can now escalate to SIGKILL, so it must
+        # not stall the dispatcher's event loop and every other call running on it.
+        await asyncio.to_thread(_reap_bridge, bridge_process)
         pool.release(port)
         unregister_call_id(call_id)
         logger.info(f"[MONITOR] Port {port} released, call_id {call_id} unregistered | room={room_name}")
@@ -490,7 +594,7 @@ async def _dispatch_queued_call(item: OutboundCallQueue) -> None:
             pool = get_port_pool()
             bridge_port = pool.acquire()
             bridge_call_id = str(uuid.uuid4())
-            ctx = multiprocessing.get_context("spawn")
+            ctx = get_bridge_context()
             inbound_bye = ctx.Event()
             register_call_id_with_event(bridge_call_id, inbound_bye)
             result_queue: multiprocessing.Queue = ctx.Queue()
@@ -517,10 +621,17 @@ async def _dispatch_queued_call(item: OutboundCallQueue) -> None:
                 # that's answered and silently agent-less while still ongoing. This does.
                 asyncio.create_task(_watch_agent_join(room_name, item.assistant_id))
 
+        # Targeted $set, not save(): save() writes the whole document from this task's stale
+        # in-memory copy and would clobber any field another writer touched meanwhile.
         item.status = "dispatched"
-        item.dispatched_at = datetime.now(timezone.utc)
         item.room_name = room_name
-        await item.save()
+        await OutboundCallQueue.find_one(
+            OutboundCallQueue.queue_id == item.queue_id
+        ).update({"$set": {
+            "status": "dispatched",
+            "dispatched_at": datetime.now(timezone.utc),
+            "room_name": room_name,
+        }})
         logger.info(
             f"Dispatched queued call {item.queue_id} → room={room_name} | to={item.to_number}"
         )
@@ -545,18 +656,27 @@ async def _dispatch_queued_call(item: OutboundCallQueue) -> None:
         await item.save()
 
     finally:
-        release_slot()  # release reservation taken at top of this function
+        release_slot(TELEPHONY)  # release reservation taken at top of this function
 
 
 async def _process_pending() -> None:
     """Check queue and dispatch as many calls as current capacity allows."""
-    global _dispatching_count
     try:
-        active = await _get_active_session_count()
-        slots = settings.MAX_CONCURRENT_JOBS - active
+        counts = await _get_active_session_counts()
+        active = counts[TELEPHONY]
+        # Bounded by the telephony cap and by whatever the global ceiling still allows, so a
+        # busy web tier cannot be crowded out by the outbound queue or vice versa.
+        slots = min(
+            settings.MAX_CONCURRENT_JOBS - active,
+            settings.MAX_CONCURRENT_SESSIONS - sum(counts.values()),
+        )
 
         if slots <= 0:
-            logger.info(f"Dispatcher: active={active}, no slots available (max={settings.MAX_CONCURRENT_JOBS})")
+            logger.info(
+                f"Dispatcher: telephony={active}, total={sum(counts.values())}, "
+                f"no slots available (telephony max={settings.MAX_CONCURRENT_JOBS}, "
+                f"global max={settings.MAX_CONCURRENT_SESSIONS})"
+            )
             return
 
         pending = (
@@ -570,15 +690,37 @@ async def _process_pending() -> None:
             logger.debug(f"Dispatcher: active={active}, slots={slots}, queue empty")
             return
 
+        claimed = 0
         for item in pending:
+            # Claimed with a conditional update rather than a read-then-save(). The old code
+            # read the pending rows and then wrote status back unconditionally, so two
+            # dispatchers (or one dispatcher racing its own stuck-item sweep) could both claim
+            # the same row and dial the same number twice. The same reasoning is already
+            # documented for CallRecord in livekit_svc.py.
+            #
+            # dispatched_at is stamped here, at claim time, because the stuck-item sweep
+            # measures how long a row has been *dispatching*.
+            claim = await OutboundCallQueue.find_one(
+                OutboundCallQueue.queue_id == item.queue_id,
+                OutboundCallQueue.status == "pending",
+            ).update(
+                {"$set": {
+                    "status": "dispatching",
+                    "dispatched_at": datetime.now(timezone.utc),
+                }}
+            )
+            if getattr(claim, "modified_count", 1) == 0:
+                logger.info(f"Queue item {item.queue_id} already claimed elsewhere; skipping")
+                continue
             item.status = "dispatching"
-            await item.save()
-            _dispatching_count += 1  # reserve before task starts to prevent double-dispatch
+            # Reserve before the task starts, to prevent double-dispatch.
+            _dispatching_count[TELEPHONY] += 1
+            claimed += 1
             asyncio.create_task(_dispatch_queued_call(item))
 
         logger.info(
             f"Dispatcher: active={active}, slots={slots}, "
-            f"dispatching {len(pending)} call(s)"
+            f"dispatching {claimed} call(s)"
         )
     except Exception as e:
         logger.error(f"Dispatcher process error: {e}", exc_info=True)
@@ -641,7 +783,7 @@ async def outbound_dispatcher_loop() -> None:
     """
     logger.info(f"Outbound call dispatcher started (max_concurrent={settings.MAX_CONCURRENT_JOBS})")
 
-    await _fail_all_active_calls()
+    await _fail_stale_calls_on_startup()
     await _process_pending()
 
     asyncio.create_task(_watch_for_new_calls())

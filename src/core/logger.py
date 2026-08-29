@@ -1,3 +1,4 @@
+import contextvars
 import json
 import logging
 import sys
@@ -6,24 +7,45 @@ from multiprocessing import current_process
 
 from src.core.config import settings
 
-# Module-level global — safe because each agent subprocess handles exactly one call.
-# ContextVar was unreliable here: livekit TTS plugin spawns its own asyncio tasks
-# that don't inherit the caller's context, so _room_context.get() returned None there.
+# Two-layer room context.
+#
+# The module-level global is what the agent subprocess uses: it handles exactly one call, and
+# a ContextVar alone was unreliable there because the livekit TTS plugin spawns its own asyncio
+# tasks that don't inherit the caller's context, so the ContextVar read back None inside them.
+#
+# The ContextVar exists for the SIP dispatcher process, which interleaves many calls on one
+# event loop. Writing the global from there attributed log lines to whichever call happened to
+# set it last, which made load-test logs actively misleading. Callers in that process pass
+# global_fallback=False so they only touch the ContextVar, which asyncio scopes per task.
+#
+# A record resolves the ContextVar first and falls back to the global, so both work unchanged.
 _current_room: str | None = None
+_room_context: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "call_room", default=None
+)
 
 # LiveKit names agent worker subprocesses with this value.
 # See: livekit-agents ipc/job_proc_executor.py _create_process()
 _LIVEKIT_JOB_PROC_NAME = "job_proc"
 
 
-def set_room_context(room_name: str) -> None:
+def set_room_context(room_name: str, *, global_fallback: bool = True) -> None:
+    """Tag subsequent log records with room_name.
+
+    global_fallback=False confines the tag to the current asyncio task, for processes that
+    handle more than one call at a time.
+    """
     global _current_room
-    _current_room = room_name
+    _room_context.set(room_name)
+    if global_fallback:
+        _current_room = room_name
 
 
-def clear_room_context() -> None:
+def clear_room_context(*, global_fallback: bool = True) -> None:
     global _current_room
-    _current_room = None
+    _room_context.set(None)
+    if global_fallback:
+        _current_room = None
 
 
 _orig_record_factory = None
@@ -35,7 +57,7 @@ def _make_log_record(*args, **kwargs) -> logging.LogRecord:
     # A root-logger filter doesn't work here: Python's callHandlers walks up
     # to parent handlers without running parent-logger filters.
     record = _orig_record_factory(*args, **kwargs)
-    record.call_room = _current_room
+    record.call_room = _room_context.get() or _current_room
     return record
 
 

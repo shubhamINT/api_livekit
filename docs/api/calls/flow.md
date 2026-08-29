@@ -73,7 +73,8 @@ When you trigger an outbound call, the flow differs based on the provider.
 ### Dispatcher Capacity Rules
 
 - The dispatcher only starts new work when active sessions are below the configured limit.
-- Current defaults are `12` active outbound jobs (`MAX_CONCURRENT_JOBS`), a `2` second polling interval, and `3` retry attempts before permanent failure.
+- Current defaults are `12` active sessions (`MAX_CONCURRENT_JOBS`, shared by outbound, inbound and web calls) and `3` retry attempts before permanent failure.
+- The dispatcher is event-driven, not polled: MongoDB Change Streams wake it the moment a call is queued or a call completes. A `30` second poll remains as a safety net.
 - The worker also advertises reduced intake at higher CPU load (`load_threshold=0.65`), which complements the queue by preventing uncontrolled fan-out.
 
 ### Exotel Runtime Gating

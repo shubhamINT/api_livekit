@@ -29,13 +29,16 @@ sequenceDiagram
 
     Caller->>Exotel: Dial inbound number
     Exotel->>Bridge: SIP INVITE
+    Bridge-->>Exotel: SIP 100 Trying
     Bridge->>Bridge: Normalize dialed number
     Bridge->>DB: Lookup active inbound mapping
     DB-->>Bridge: Mapping with assistant_id and optional strategy_id
     Bridge->>DB: Load active assistant
     Bridge->>LK: Create room
     Bridge->>LK: Create dispatch metadata
-    Bridge-->>Exotel: SIP 200 OK (port bound, bridge thread starts)
+    Bridge->>Bridge: Start bridge process, wait for it to bind RTP + connect LiveKit
+    Bridge-->>Exotel: SIP 180 Ringing
+    Note over Caller,Bridge: Caller hears ringing while the agent boots
     LK->>Agent: Start session with metadata
     alt strategy_id present and lookup succeeds
         Agent->>DB: Load strategy
@@ -49,7 +52,11 @@ sequenceDiagram
         Agent->>Agent: Continue without context lookup
     end
     Agent->>Agent: Render prompt/start instruction
-    Note over Bridge,LK: Bridge thread — LiveKit connect + RTP start_inbound
+    Agent->>LK: agent_ready on sip_bridge_events
+    LK-->>Bridge: agent_ready
+    Bridge-->>Exotel: SIP 200 OK
+    Note over Bridge,Exotel: Answered only now, or after INBOUND_MAX_RING_SECONDS
+    Note over Bridge,LK: Bridge process (one per call) — LiveKit connect + RTP start_inbound
     Exotel->>Bridge: RTP audio uplink
     Bridge-->>Exotel: RTP audio downlink
     Bridge->>LK: Audio relay uplink
