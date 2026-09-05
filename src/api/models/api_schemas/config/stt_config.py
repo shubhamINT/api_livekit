@@ -33,9 +33,9 @@ class SarvamSTTConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["sarvam"] = "sarvam"
-    model: str = Field("saaras:v3", max_length=40, description="Sarvam STT model: saaras:v3 (recommended), saaras:v2.5 or saarika:v2.5")
+    model: str = Field("saaras:v3", max_length=40, description="Sarvam STT model: saaras:v3 (default) or saaras:v4. The v2.5 models were sunset by Sarvam and are no longer accepted.")
     language: str = Field("unknown", max_length=10, description="BCP-47 language code, or 'unknown' to auto-detect")
-    mode: str = Field("codemix", max_length=20, description="Transcription mode (saaras:v3 only): codemix (default — keeps code-switching intact), transcribe, translate, verbatim or translit")
+    mode: str = Field("codemix", max_length=20, description="Transcription mode: codemix (default — keeps code-switching intact), transcribe, translate, verbatim or translit")
     api_key: ProviderApiKey = Field(None, min_length=1, max_length=500, description="Sarvam API key for the parallel STT tap (optional, falls back to system SARVAM_API_KEY). Distinct from assistant_tts_config.api_key, which belongs to the selected TTS provider.")
 
     @field_validator("model", mode="after")

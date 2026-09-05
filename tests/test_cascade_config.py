@@ -6,6 +6,7 @@ tests cover the parts that decide what actually gets built, without touching the
 
 import sys
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -18,6 +19,7 @@ from livekit.agents.metrics.usage import (
     STTModelUsage,
     TTSModelUsage,
 )
+from livekit.plugins.sarvam.stt import MODEL_CONFIGS as SARVAM_MODEL_CONFIGS
 
 from src.api.models.api_schemas import CreateAssistant, UpdateAssistant
 from src.core.agents.llm import create_llm
@@ -27,6 +29,31 @@ from src.core.db.db_schemas import UsageRecord
 
 sys.path.append(str(Path(__file__).resolve().parents[1] / "scripts"))
 from migrate_llm_knobs import stale_knobs  # noqa: E402
+
+
+def narrower_sarvam_model(name, *, languages=None, supports_mode=True):
+    """Register a Sarvam STT model with a narrower surface than the shipped roster.
+
+    The per-model language and mode gates exist because the plugin raises rather than
+    warning, and that exception kills the job. Today every model the plugin ships accepts
+    the same languages and modes, so there is nothing real to gate against; this registers
+    a model that does not, in the plugin's own table, which is the one `stt/lang.py` reads.
+    """
+    base = SARVAM_MODEL_CONFIGS["saaras:v3"]
+    return mock.patch.dict(
+        SARVAM_MODEL_CONFIGS,
+        {
+            name: replace(
+                base,
+                supports_mode=supports_mode,
+                # "unknown" is Sarvam's auto-detect, and the fallback every dropped code
+                # lands on, so a model that rejected it could not be built at all.
+                allowed_languages=(
+                    {*languages, "unknown"} if languages else base.allowed_languages
+                ),
+            )
+        },
+    )
 
 
 def make_assistant(preferred_languages=None, **overrides):
@@ -62,13 +89,13 @@ class TestCreateSTT(unittest.TestCase):
                 assistant_stt_model="sarvam",
                 assistant_stt_config={
                     "api_key": "k",
-                    "model": "saarika:v2.5",
+                    "model": "saaras:v4",
                     "language": "hi-IN",
                     "mode": "transcribe",
                 },
             )
         )
-        self.assertEqual(stt._opts.model, "saarika:v2.5")
+        self.assertEqual(stt._opts.model, "saaras:v4")
         self.assertEqual(stt._opts.language, "hi-IN")
         self.assertEqual(stt._opts.mode, "transcribe")
 
@@ -132,29 +159,34 @@ class TestCreateSTT(unittest.TestCase):
         self.assertEqual(stt._opts.language, "unknown")
 
     def test_sarvam_language_sets_are_per_model(self):
-        """saarika:v2.5 speaks a subset of saaras:v3 — a code valid on one raises on the
-        other, so the check has to know which model it is building for."""
-        cfg = {"api_key": "k", "model": "saarika:v2.5", "language": "sat-IN"}
-        stt = create_stt(make_assistant(assistant_stt_model="sarvam", assistant_stt_config=cfg))
-        self.assertEqual(stt._opts.language, "unknown")
+        """A code valid on one Sarvam model raises on another, so the check has to know
+        which model it is building for. Every model on the current roster takes the same
+        codes, so the narrow model is a stand-in — the roster diverged this way before
+        (the sunset saarika:v2.5 spoke 11 codes to saaras:v3's 23) and can again."""
+        with narrower_sarvam_model("saaras:vNarrow", languages={"en-IN", "hi-IN"}):
+            cfg = {"api_key": "k", "model": "saaras:vNarrow", "language": "sat-IN"}
+            stt = create_stt(
+                make_assistant(assistant_stt_model="sarvam", assistant_stt_config=cfg)
+            )
+            self.assertEqual(stt._opts.language, "unknown")
         cfg = {"api_key": "k", "model": "saaras:v3", "language": "sat-IN"}
         stt = create_stt(make_assistant(assistant_stt_model="sarvam", assistant_stt_config=cfg))
         self.assertEqual(stt._opts.language, "sat-IN")
 
     def test_sarvam_mode_is_dropped_on_models_that_reject_it(self):
         """`mode` is model-gated exactly like `language`, and the plugin raises the same
-        way. Only saaras:v3 supports it, so this repo's blanket "codemix" default would
-        kill every job on a v2.5 model."""
-        for model in ("saarika:v2.5", "saaras:v2.5"):
-            with self.subTest(model=model):
-                stt = create_stt(
-                    make_assistant(
-                        assistant_stt_model="sarvam",
-                        assistant_stt_config={"api_key": "k", "model": model},
-                    )
+        way, so this repo's blanket "codemix" default would kill every job on a model that
+        does not take it. saaras:v3 and saaras:v4 both do; the v2.5 pair that did not is
+        sunset, hence the stand-in."""
+        with narrower_sarvam_model("saaras:vNoMode", supports_mode=False):
+            stt = create_stt(
+                make_assistant(
+                    assistant_stt_model="sarvam",
+                    assistant_stt_config={"api_key": "k", "model": "saaras:vNoMode"},
                 )
-                self.assertIsNotNone(stt)
-                self.assertNotEqual(stt._opts.mode, "codemix")
+            )
+        self.assertIsNotNone(stt)
+        self.assertNotEqual(stt._opts.mode, "codemix")
 
     def test_sarvam_blank_language_means_auto_detect(self):
         """An empty string is reachable from the API — the schema sets no min_length — and
@@ -415,10 +447,11 @@ class TestOpenAISTT(unittest.TestCase):
     def test_unpinned_autodetects(self):
         """Contract change: unpinned used to mean preferred_languages[0], then a hardcoded
         'en' — a Hindi caller was transcribed as English. Detect instead. The plugin
-        expresses auto-detect as an empty language code."""
+        expresses auto-detect as an empty language list (it was a single empty string
+        before 1.7.0, which added code-switched transcription)."""
         stt = self._stt()
         self.assertTrue(stt._opts.detect_language)
-        self.assertEqual(stt._opts.language, "")
+        self.assertEqual(stt._opts.languages, [])
 
     def test_preferred_languages_do_not_pin(self):
         stt = self._stt(preferred_languages=["hi-IN"])
@@ -426,7 +459,7 @@ class TestOpenAISTT(unittest.TestCase):
 
     def test_explicit_language_pins(self):
         stt = self._stt(preferred_languages=["hi-IN"], language="ta")
-        self.assertEqual(stt._opts.language, "ta")
+        self.assertEqual(stt._opts.languages, ["ta"])
         self.assertFalse(stt._opts.detect_language)
 
     def test_rejects_bcp47_language(self):
@@ -438,7 +471,7 @@ class TestOpenAISTT(unittest.TestCase):
     def test_detect_language_blanks_the_pinned_language(self):
         stt = self._stt(language="hi", detect_language=True)
         self.assertTrue(stt._opts.detect_language)
-        self.assertEqual(stt._opts.language, "")
+        self.assertEqual(stt._opts.languages, [])
 
     def test_optional_knobs_stay_unset_by_default(self):
         stt = self._stt()

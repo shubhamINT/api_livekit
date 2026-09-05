@@ -118,8 +118,8 @@ async def run_sarvam_parallel_stt(
         # Indian language mid-sentence.
         mode=validate_sarvam_mode(sarvam_model, mode or "codemix", assistant_id=assistant_id),
         # Validated, not passed through: the plugin RAISES on a code its model does not
-        # speak (saarika:v2.5 accepts fewer than saaras:v3), which would take down the tap
-        # for the whole call. An empty string is reachable from the API too — the schema
+        # speak, which would take down the tap for the whole call. The accepted set is per
+        # model. An empty string is reachable from the API too — the schema
         # sets no min_length — and the plugin reads it as en-IN rather than auto-detect.
         language=validate_sarvam_language(sarvam_model, language, assistant_id=assistant_id),
         # Never assistant_tts_config["api_key"] — that key belongs to the selected TTS

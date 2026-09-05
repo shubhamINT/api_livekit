@@ -21,9 +21,12 @@ call time; a wrong model id does not degrade to anything.
 """
 
 # ── STT ───────────────────────────────────────────────────────────────────────────────
-# livekit.plugins.sarvam.stt.MODEL_CONFIGS. saaras:v3 is the platform default: it is the only
-# one that takes `mode` (and therefore code-mixing).
-SARVAM_STT_MODELS = frozenset({"saaras:v3", "saaras:v2.5", "saarika:v2.5"})
+# livekit.plugins.sarvam.stt.MODEL_CONFIGS. saaras:v3 stays the platform default; saaras:v4 is
+# the plugin's own default since 1.7.1 and takes the same languages and modes. The v2.5 pair
+# (saaras:v2.5, saarika:v2.5) was sunset by Sarvam and dropped from the plugin roster in 1.7.1,
+# so it is rejected here too — an assistant still holding one is found by
+# `scripts/audit_assistant_models.py`.
+SARVAM_STT_MODELS = frozenset({"saaras:v3", "saaras:v4"})
 
 # livekit.plugins.cartesia.models.STTModels. ink-whisper is 43 languages, one at a time;
 # ink-2 is English only and became the plugin default in 1.5.15, which is why the factory pins
@@ -101,8 +104,9 @@ OPENAI_STT_MODELS = frozenset(
 )
 
 # ── TTS ───────────────────────────────────────────────────────────────────────────────
-# livekit.plugins.elevenlabs.models.TTSModels. eleven_v3 is the platform default and the only
-# one with no `speed` control — see agents/tts/factory.py, which drops the knob for it.
+# livekit.plugins.elevenlabs.models.TTSModels. eleven_v3 is the platform default. It and
+# eleven_v3_conversational are the two with no `speed` control — see agents/tts/factory.py,
+# which drops the knob for them.
 ELEVENLABS_TTS_MODELS = frozenset(
     {
         "eleven_monolingual_v1",
@@ -113,6 +117,7 @@ ELEVENLABS_TTS_MODELS = frozenset(
         "eleven_flash_v2_5",
         "eleven_flash_v2",
         "eleven_v3",
+        "eleven_v3_conversational",
     }
 )
 

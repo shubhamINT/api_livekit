@@ -4,7 +4,7 @@ python-dotenv>=1.0.0
 chevron>=0.14.0
 httpx>=0.28.0
 email-validator>=2.0.0
-livekit-agents[cartesia,deepgram,elevenlabs,google,openai,sarvam]~=1.6.7
+livekit-agents[cartesia,deepgram,elevenlabs,google,openai,sarvam]~=1.7.1
 mistralai @ https://github.com/mistralai/client-python/archive/refs/tags/v2.4.5.tar.gz
 audioop-lts>=0.2.1; python_version >= "3.13"
 scipy>=1.13.0

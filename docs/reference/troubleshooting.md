@@ -199,7 +199,8 @@ ends. Most are now refused at create/update time instead:
 | Cause | Now caught by |
 |---|---|
 | A provider with no API key (per-assistant or system) | `422` at create, `400` at update |
-| An STT/TTS model id that does not exist (`nova-9`, `saaras:v4`) | `422` — the accepted sets are in `src/core/model_support/speech.py` |
+| An STT/TTS model id that does not exist (`nova-9`, `saaras:v9`) | `422` — the accepted sets are in `src/core/model_support/speech.py` |
+| A Sarvam STT model the vendor has sunset (`saaras:v2.5`, `saarika:v2.5`) | `422` — migrate to `saaras:v3` or `saaras:v4`; `scripts/audit_assistant_models.py` finds stored assistants still holding one |
 | A `bulbul:v2` Sarvam speaker (`anushka`, `manisha`, …) on the pinned `bulbul:v3` | `422` — v2 and v3 share no speaker names |
 | `assistant_stt_model: "native"` in cascade mode | `422` — there is no realtime model to self-transcribe |
 | A Gemini chat model (`gemini-2.5-flash`) in realtime mode | `422` — only the three Live models can hold a session |

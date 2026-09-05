@@ -69,7 +69,7 @@ def create_stt(assistant):
             logger.error(f"No Sarvam API key for cascade assistant {assistant_id}")
             return None
         # The multilingual default: language "unknown" auto-detects, and mode "codemix"
-        # (saaras:v3 only) keeps code-switching intact inside a single utterance.
+        # keeps code-switching intact inside a single utterance.
         # interaction_config.preferred_languages needs no wiring here — auto-detect
         # already covers every language it could list, and pinning one would be strictly
         # worse for a caller who switches mid-call. Set `language` explicitly to pin.
