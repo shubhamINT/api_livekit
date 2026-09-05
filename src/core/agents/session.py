@@ -445,8 +445,10 @@ async def entrypoint(ctx: JobContext):
             logger.info(
                 f"Usage persisted | room={room_name} | mode={usage.mode} | "
                 f"llm_tokens={usage.llm_total_tokens} | "
+                f"llm_cached={usage.llm_input_cached_tokens} | "
                 f"tts_chars={usage.tts_characters_count} | "
-                f"stt_audio={usage.stt_audio_duration:.1f}s"
+                f"stt_audio={usage.stt_audio_duration:.1f}s | "
+                f"stt_tokens={usage.stt_input_tokens + usage.stt_output_tokens}"
             )
         except Exception as e:
             logger.error(f"Failed to persist usage record: {e}", exc_info=True)

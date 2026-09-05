@@ -53,14 +53,17 @@ installed `livekit-agents` 1.6.7, on 2026-09-04:
 
 ## Doing now
 
-**PR 0 — SDK upgrade 1.6.7 → 1.7.1.** Code and docs are done and every automated gate is
-green. What remains is the manual call verification, which needs a real deployment: one
-inbound Exotel call and one cascade call, checking that audio flows both ways and the
-transcript and usage record land.
+**PR 2 — pipeline Sarvam STT tap.** Pipeline mode pays Sarvam on every call and records
+nothing, because the tap in `src/core/agents/stt/sarvam_parallel.py` builds a standalone
+plugin STT that is never handed to `AgentSession`, so its `RECOGNITION_USAGE` events reach
+no collector. Plan: pass an accumulator into `run_sarvam_parallel_stt`, handle
+`RECOGNITION_USAGE` in the event loop that already runs there, merge the result at teardown
+as a synthetic `STTModelUsage` so every raw `model_usage` row has one shape, and drop the
+`stt_provider = None unless cascade` rule in `src/core/agents/session.py`.
 
-Why the SDK bump earns its place in this effort: 1.6.10 exposes `cache_creation_tokens` in LLM
-metrics (livekit/agents#6655) and makes fallback adapters report the active instance's model
-and provider (livekit/agents#6690).
+Still outstanding from PR 0: the manual call verification, which needs a real deployment —
+one inbound Exotel call and one cascade call, checking that audio flows both ways and the
+transcript and usage record land.
 
 ## Done
 
@@ -113,21 +116,39 @@ the field descriptions in `src/api/models/api_schemas/config/stt_config.py`.
 0 broken. `uv run python scripts/check_model_allowlist.py` → no drift. `uvx ruff check` on the
 touched files reports only the violations that were already there before this change.
 
+**PR 1 — capture everything the SDK already reports.** `UsageRecord` gained the missing LLM
+fields (`llm_input_tokens`, `llm_output_tokens`, `llm_input_cached_tokens`,
+`llm_input_cache_creation_tokens`, `llm_input_image_tokens`, `llm_input_cached_image_tokens`,
+`llm_session_duration`), the token-billed STT/TTS pairs, and three provenance fields:
+`model_usage` (the raw per-`(provider, model)` list, filtered to the billable components),
+`usage_schema_version` (1 = old partial rows, 2 = everything) and `sdk_version`.
+`summarize_usage` folds all of them. The cached-subset invariant is documented beside the
+fields, in the webhook and admin docs, and in the new `docs/reference/usage-accounting.md`.
+
+Deviations from the plan, both deliberate:
+
+- **Did not** move `_persist_usage` onto `ctx.make_session_report()`. That method raises
+  `RuntimeError` while `RecorderIO` is still recording (`livekit/agents/job.py:395`), which
+  is exactly the state teardown runs in. `sdk_version` comes from
+  `livekit.agents.__version__` instead — same value, no failure mode.
+- **Did not** re-bind `realtime_provider` / `session` as explicit parameters. Both are bound
+  (session.py:642, 819) before `_persist_usage` is ever awaited, so the closure is already
+  correct; churning it is unrelated risk.
+
+The new fields are exposed on the end-call webhook and in all three `/admin` token analytics
+aggregations, additive only. Tests went into the existing `TestSummarizeUsage` rather than a
+new file, and `tests/test_livekit_lifecycle.py` now builds its fake usage record with
+`UsageRecord.model_construct()` so the next added field cannot break it. One unrelated test
+needed a fix: `test_mcp_docs.py` asserted that a page ranks in the top 8 of a keyword search,
+and the new docs page pushed it to 9th; the search window in the test widened to 10.
+
+Not fixed here, still zero, and now documented as such: pipeline-mode Sarvam STT (PR 2) and
+realtime native transcription (PR 3).
+
+Gates: 479 tests OK, `mkdocs build --strict` clean, 15 Mermaid diagrams parse, ruff on the
+touched files reports only pre-existing violations.
+
 ## Left
-
-**PR 1 — capture everything the SDK already reports.**
-
-- `UsageRecord`: add `model_usage: list[dict]`, `usage_schema_version: int`, `sdk_version`.
-- `UsageRecord`: add flat columns, all defaulting to 0 so existing readers keep working —
-  `llm_input_cached_tokens`, `llm_input_cache_creation_tokens`, `llm_input_image_tokens`,
-  `llm_input_cached_image_tokens`, `llm_session_duration`, `stt_input_tokens`,
-  `stt_output_tokens`, `tts_input_tokens`, `tts_output_tokens`.
-- Correct the comment at `db_schemas.py:372` claiming pipeline STT cost sits inside the LLM
-  tokens, and document the cached-subset invariant beside the fields.
-- `summarize_usage`: fold every documented field and return the raw `model_usage`.
-- `_persist_usage`: source the snapshot from `ctx.make_session_report()` so `model_usage` and
-  `sdk_version` come from one place, and capture `realtime_provider` / `session` explicitly
-  rather than closing over locals bound later in `entrypoint()`.
 
 **PR 2 — pipeline Sarvam STT tap.**
 
@@ -151,13 +172,16 @@ touched files reports only the violations that were already there before this ch
 - Make the teardown write an upsert too, which also removes the duplicate-key path when two
   teardown routes race.
 
-**PR 5 — tests and docs.**
+**PR 5 — close out the tests and docs.** Most of this shipped with PR 1: the field-level
+tests live in `TestSummarizeUsage`, the reference page is
+`docs/reference/usage-accounting.md`, and troubleshooting has the "usage record is all
+zeros" section. What is left depends on PR 2 to PR 4 landing first:
 
-- `tests/test_usage_summary.py`: fake `model_usage` per mode — cascade, pipeline + Sarvam,
-  pipeline + native, realtime, text-only, and a mid-call model swap — asserting every field
-  lands and that the cached-subset invariant holds.
-- A usage/billing reference page in `docs/`, plus a `docs/reference/troubleshooting.md` entry
-  for "usage record is all zeros".
+- Per-mode coverage that the earlier PRs make meaningful: pipeline + Sarvam and realtime +
+  native both currently record zero STT on purpose, so the assertions only become real once
+  those taps report.
+- Remove the "Known gaps" section from `docs/reference/usage-accounting.md` as each gap
+  closes, and update the per-mode table with it.
 
 **Follow-up left by PR 0 — the deprecated Python CLI.**
 

@@ -9,6 +9,7 @@ import httpx
 from src.services.livekit import livekit_svc
 from src.services.livekit.livekit_svc import LiveKitService
 from src.core.billing import calculate_billable_duration_minutes
+from src.core.db.db_schemas import UsageRecord
 
 
 class FakeCallRecord:
@@ -240,13 +241,14 @@ class TestLiveKitLifecycle(unittest.IsolatedAsyncioTestCase):
         )
         usage_record_model = SimpleNamespace(
             room_name=RoomNameField(),
+            # Built from the real document so every field the webhook reads exists with
+            # its default — a hand-listed stub breaks whenever a usage field is added.
             find_one=AsyncMock(
-                return_value=SimpleNamespace(
+                return_value=UsageRecord.model_construct(
                     mode="cascade",
                     llm_model="gpt-4.1-mini",
-                    llm_input_audio_tokens=0,
                     llm_input_text_tokens=90,
-                    llm_output_audio_tokens=0,
+                    llm_input_cached_text_tokens=60,
                     llm_output_text_tokens=40,
                     llm_total_tokens=155,
                     tts_characters_count=250,
@@ -276,6 +278,8 @@ class TestLiveKitLifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage["stt_audio_duration"], 31.25)
         self.assertEqual(usage["tts_characters_count"], 250)
         self.assertEqual(usage["llm_total_tokens"], 155)
+        self.assertEqual(usage["llm_input_cached_text_tokens"], 60)
+        self.assertEqual(usage["usage_schema_version"], 1)
 
     async def test_send_end_call_webhook_logs_non_2xx_as_error(self):
         """A rejecting customer endpoint must not be recorded as a successful delivery."""

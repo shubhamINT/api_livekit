@@ -356,24 +356,55 @@ class UsageRecord(Document):
     llm_realtime_provider: Optional[str] = None  # LLM vendor "gemini" | "openai" (recorded for all modes)
     llm_model: Optional[str] = None  # e.g. "gpt-4.1-mini", "gpt-realtime-1.5"
 
-    # LLM tokens (from session.usage — exact values)
+    # LLM tokens (from session.usage — exact values).
+    #
+    # Cached counts are SUBSETS, not separate buckets:
+    #   llm_input_cached_text_tokens <= llm_input_text_tokens <= llm_input_tokens
+    # and llm_total_tokens (input + output) already contains every cached token. Pricing
+    # multiplies the cached slice by the discounted rate and the remainder by the full
+    # rate; adding the two columns together double-counts. The one exception is
+    # llm_input_cache_creation_tokens, which providers bill as a write on top of the read.
+    llm_input_tokens: int = 0
+    llm_output_tokens: int = 0
     llm_input_audio_tokens: int = 0
     llm_input_text_tokens: int = 0
+    llm_input_image_tokens: int = 0
+    llm_input_cached_tokens: int = 0
     llm_input_cached_audio_tokens: int = 0
     llm_input_cached_text_tokens: int = 0
+    llm_input_cached_image_tokens: int = 0
+    llm_input_cache_creation_tokens: int = 0
     llm_output_audio_tokens: int = 0
     llm_output_text_tokens: int = 0
     llm_total_tokens: int = 0
+    llm_session_duration: float = 0.0  # seconds; session-billed providers only
 
-    # TTS usage (from session.usage — exact values)
+    # TTS usage (from session.usage — exact values). Character-billed providers fill
+    # tts_characters_count; token-billed ones fill the token pair instead.
     tts_characters_count: int = 0
     tts_audio_duration: float = 0.0  # seconds
+    tts_input_tokens: int = 0
+    tts_output_tokens: int = 0
 
-    # STT usage. Only a mode with a standalone STT stage (cascade) reports these; in
-    # pipeline/realtime the LLM transcribes internally and the cost is inside its tokens.
+    # STT usage. Only a stage the AgentSession itself owns reports these, which today
+    # means cascade. In pipeline mode the Sarvam tap runs outside the session and in
+    # realtime the LLM transcribes internally, so both leave these at zero — see
+    # docs/reference/usage-accounting.md for what is and is not counted yet.
     stt_provider: Optional[str] = None  # "sarvam" | "cartesia" | "deepgram" | "elevenlabs" | "openai" | "native"
     stt_model: Optional[str] = None  # e.g. "saaras:v3", "ink-whisper", "nova-3", "scribe_v2_realtime", "gpt-4o-mini-transcribe"
     stt_audio_duration: float = 0.0  # seconds of audio transcribed
+    stt_input_tokens: int = 0  # token-billed STT (OpenAI) only
+    stt_output_tokens: int = 0
+
+    # Per (provider, model) usage exactly as the SDK reported it, filtered to the billable
+    # components. This is the source of truth for pricing: the flat columns above sum
+    # across a mid-call model swap, this list does not. Rates are never stored here, so a
+    # price change needs no migration and no backfill.
+    model_usage: List[Dict] = Field(default_factory=list)
+    # 1 = pre-2026-09 rows, which carry only the flat LLM/TTS columns and no model_usage.
+    # 2 = every field above. Treat a version 1 row as partial, not as zero usage.
+    usage_schema_version: int = 1
+    sdk_version: Optional[str] = None  # livekit-agents version that produced the numbers
 
     # Telephony duration (copied from CallRecord for aggregation convenience)
     call_duration_minutes: float = 0.0

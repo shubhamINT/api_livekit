@@ -13,8 +13,10 @@ from unittest import mock
 
 from pydantic import ValidationError
 
+from livekit.agents import __version__ as livekit_agents_version
 from livekit.agents.metrics.usage import (
     AgentSessionUsage,
+    EOTModelUsage,
     LLMModelUsage,
     STTModelUsage,
     TTSModelUsage,
@@ -1590,6 +1592,10 @@ class TestSummarizeUsage(unittest.TestCase):
                     model="gpt-4.1-mini",
                     input_tokens=100,
                     input_text_tokens=90,
+                    # Subsets of the two counts above, not extra tokens on top of them.
+                    input_cached_tokens=60,
+                    input_cached_text_tokens=60,
+                    input_cache_creation_tokens=20,
                     output_tokens=40,
                     output_text_tokens=40,
                 ),
@@ -1608,6 +1614,11 @@ class TestSummarizeUsage(unittest.TestCase):
                 ),
                 STTModelUsage(
                     provider="sarvam", model="saaras:v3", audio_duration=31.25
+                ),
+                # Local turn detector: reported by the SDK, free, and deliberately kept
+                # out of the stored model_usage list.
+                EOTModelUsage(
+                    provider="livekit", model="turn-detector-v1-mini", total_requests=7
                 ),
             ]
         )
@@ -1643,6 +1654,72 @@ class TestSummarizeUsage(unittest.TestCase):
         )
         self.assertIsNone(metered["llm_model"])
         self.assertEqual(metered["tts_characters_count"], 0)
+
+    def test_cache_tokens_are_recorded_and_stay_a_subset(self):
+        """The cache discount is the single largest item on a cascade bill, and the
+        cached counts are subsets of the input counts — pricing that adds them to the
+        input counts instead of splitting them out double-counts every cached turn."""
+        metered = summarize_usage(SimpleNamespace(usage=self._usage()))
+        self.assertEqual(metered["llm_input_cached_tokens"], 60)
+        self.assertEqual(metered["llm_input_cached_text_tokens"], 60)
+        self.assertEqual(metered["llm_input_cache_creation_tokens"], 20)
+        self.assertLessEqual(
+            metered["llm_input_cached_text_tokens"], metered["llm_input_text_tokens"]
+        )
+        self.assertLessEqual(
+            metered["llm_input_cached_tokens"], metered["llm_input_tokens"]
+        )
+        self.assertLessEqual(metered["llm_input_tokens"], metered["llm_total_tokens"])
+
+    def test_token_billed_stt_and_tts_are_recorded(self):
+        """OpenAI bills STT and TTS in tokens, not seconds or characters. Those
+        entries carry zero audio_duration and zero characters_count, so before these
+        fields existed an openai STT stage recorded nothing at all."""
+        metered = summarize_usage(
+            SimpleNamespace(
+                usage=AgentSessionUsage(
+                    model_usage=[
+                        STTModelUsage(
+                            provider="openai",
+                            model="gpt-4o-mini-transcribe",
+                            input_tokens=1200,
+                            output_tokens=80,
+                        ),
+                        TTSModelUsage(
+                            provider="openai",
+                            model="gpt-4o-mini-tts",
+                            input_tokens=300,
+                            output_tokens=4000,
+                        ),
+                    ]
+                )
+            )
+        )
+        self.assertEqual(metered["stt_input_tokens"], 1200)
+        self.assertEqual(metered["stt_output_tokens"], 80)
+        self.assertEqual(metered["tts_input_tokens"], 300)
+        self.assertEqual(metered["tts_output_tokens"], 4000)
+
+    def test_raw_model_usage_keeps_per_model_attribution(self):
+        """The flat columns sum across a mid-call model swap; this list is what lets
+        pricing charge each model at its own rate."""
+        metered = summarize_usage(SimpleNamespace(usage=self._usage()))
+        self.assertEqual(
+            [(e["type"], e["model"]) for e in metered["model_usage"]],
+            [
+                ("llm_usage", "gpt-4.1-mini"),
+                ("llm_usage", "gpt-4o-mini"),
+                ("tts_usage", "sonic-3"),
+                ("stt_usage", "saaras:v3"),
+            ],
+        )
+        # Full dump, zeros included: a missing key must never be ambiguous.
+        self.assertEqual(metered["model_usage"][0]["input_cached_tokens"], 60)
+
+    def test_records_the_schema_and_sdk_versions(self):
+        metered = summarize_usage(SimpleNamespace(usage=self._usage()))
+        self.assertEqual(metered["usage_schema_version"], 2)
+        self.assertEqual(metered["sdk_version"], livekit_agents_version)
 
 
 class TestStaleKnobBackfill(unittest.TestCase):

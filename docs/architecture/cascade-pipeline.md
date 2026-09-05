@@ -363,11 +363,18 @@ flat `UsageRecord` fields:
 | Field | Populated in |
 |---|---|
 | `llm_model`, `llm_input_*`, `llm_output_*`, `llm_total_tokens` | all modes |
+| `llm_input_cached_*`, `llm_input_cache_creation_tokens` | all modes, whenever the provider reports a cache hit |
 | `tts_characters_count`, `tts_audio_duration` | `pipeline`, `cascade` |
+| `tts_input_tokens`, `tts_output_tokens` | token-billed TTS only |
 | `stt_provider`, `stt_model`, `stt_audio_duration` | **`cascade` only** |
+| `stt_input_tokens`, `stt_output_tokens` | token-billed STT (`openai`) in `cascade` only |
+| `model_usage`, `usage_schema_version`, `sdk_version` | all modes |
 
-STT fields stay empty in the other modes because their transcription happens *inside* the LLM
-and the spend is already inside its token counts — there is nothing separate to attribute.
+STT fields stay empty in the other modes: `realtime` transcribes inside the LLM, and
+`pipeline` runs Sarvam on a parallel tap outside the agent session, where the SDK's collector
+never sees it. `model_usage` is the raw per-`(provider, model)` list and is what pricing should
+read — the flat columns sum across a mid-call model swap. See
+[Usage accounting](../reference/usage-accounting.md).
 
 These values are raw usage metrics, not costs. Apply your own provider rates downstream. They
 reach you three ways: the [end-of-call webhook](../api/calls/webhook.md), the

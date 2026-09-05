@@ -361,6 +361,38 @@ the call had already ended.
 
 ---
 
+## Usage record is all zeros
+
+The call ran, the transcript is there, but `usage_records` shows `0` everywhere (or the
+webhook's `data.usage` block is missing entirely).
+
+| Symptom | Cause |
+|---|---|
+| No `usage_records` row at all | The worker died before teardown, or the row lost a race on the unique `room_name` index. The worker log has `Failed to persist usage record`. |
+| Every field `0`, `model_usage` empty, `Could not read session usage` in the log | Teardown ran before `AgentSession` was built — the call failed during setup. Check for an earlier error in the same job. |
+| LLM fields populated, STT fields `0` | Expected outside `cascade`. Pipeline-mode Sarvam and realtime native transcription are not metered yet — see [Usage accounting](usage-accounting.md#known-gaps). |
+| `usage_schema_version` is `1` | An old record. The cached-token and token-billed STT/TTS fields did not exist when it was written; they read `0` because nothing was captured, not because nothing was used. |
+| Cached tokens `0` on a cascade call | Normal on a short call. OpenAI only caches a prompt above its own minimum length, and the first turn never hits. |
+
+To read one row directly:
+
+```bash
+uv run python -c "
+import asyncio
+from src.core.db.database import init_db
+from src.core.db.db_schemas import UsageRecord
+
+async def main():
+    await init_db()
+    r = await UsageRecord.find_one(UsageRecord.room_name == 'ROOM_NAME')
+    print(r.model_dump_json(indent=2) if r else 'no usage record')
+
+asyncio.run(main())
+"
+```
+
+---
+
 ## Changing a model list
 
 Never from memory. OpenAI retires models on its own schedule and a stale entry is

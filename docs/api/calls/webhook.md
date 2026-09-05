@@ -58,14 +58,26 @@ Content-Type: application/json
       "llm_model": "gpt-4.1-mini",
       "llm_input_audio_tokens": 0,
       "llm_input_text_tokens": 850,
+      "llm_input_image_tokens": 0,
       "llm_output_audio_tokens": 0,
       "llm_output_text_tokens": 1230,
       "llm_total_tokens": 2080,
+      "llm_input_cached_tokens": 512,
+      "llm_input_cached_audio_tokens": 0,
+      "llm_input_cached_text_tokens": 512,
+      "llm_input_cached_image_tokens": 0,
+      "llm_input_cache_creation_tokens": 0,
+      "llm_session_duration": 0.0,
       "tts_characters_count": 485,
       "tts_audio_duration": 32.5,
+      "tts_input_tokens": 0,
+      "tts_output_tokens": 0,
       "stt_provider": "sarvam",
       "stt_model": "saaras:v3",
-      "stt_audio_duration": 41.75
+      "stt_audio_duration": 41.75,
+      "stt_input_tokens": 0,
+      "stt_output_tokens": 0,
+      "usage_schema_version": 2
     }
   }
 }
@@ -109,19 +121,40 @@ Content-Type: application/json
 | `data.usage.llm_model`              | string | LLM model(s) used, comma-separated if more than one. |
 | `data.usage.llm_input_audio_tokens` | number | LLM audio input tokens (`0` in cascade — the LLM receives text). |
 | `data.usage.llm_input_text_tokens`  | number | LLM text input tokens.                |
+| `data.usage.llm_input_image_tokens` | number | LLM image input tokens. `0` unless the conversation carried images. |
 | `data.usage.llm_output_audio_tokens`| number | LLM audio output tokens (`0` outside realtime). |
 | `data.usage.llm_output_text_tokens` | number | LLM text output tokens.               |
 | `data.usage.llm_total_tokens`       | number | Total LLM tokens for this call.       |
+| `data.usage.llm_input_cached_tokens`| number | Input tokens served from the provider's prompt cache. **A subset of the input counts above, not an addition to them** — see the warning below. |
+| `data.usage.llm_input_cached_audio_tokens` | number | The audio part of `llm_input_cached_tokens`. |
+| `data.usage.llm_input_cached_text_tokens`  | number | The text part of `llm_input_cached_tokens`. |
+| `data.usage.llm_input_cached_image_tokens` | number | The image part of `llm_input_cached_tokens`. |
+| `data.usage.llm_input_cache_creation_tokens` | number | Input tokens written *into* the cache. Unlike the cached counts, providers that report this bill it on top of the read. `0` on OpenAI, which does not charge for cache writes. |
+| `data.usage.llm_session_duration`   | number | Connection seconds, for providers that bill a realtime session by time rather than by token. `0` otherwise. |
 | `data.usage.tts_characters_count`   | number | Characters sent to TTS provider.      |
 | `data.usage.tts_audio_duration`     | number | TTS audio duration in seconds.        |
+| `data.usage.tts_input_tokens`       | number | TTS input tokens. Token-billed TTS only; `0` for character-billed providers. |
+| `data.usage.tts_output_tokens`      | number | TTS output (audio) tokens. Token-billed TTS only. |
 | `data.usage.stt_provider`           | string | STT provider. **`cascade` mode only**, `null` otherwise. |
 | `data.usage.stt_model`              | string | STT model. **`cascade` mode only**, `null` otherwise. |
 | `data.usage.stt_audio_duration`     | number | Seconds of audio transcribed. **`cascade` mode only**, `0` otherwise. |
+| `data.usage.stt_input_tokens`       | number | STT input (audio) tokens. Token-billed STT (`openai`) only; `0` for duration-billed providers. |
+| `data.usage.stt_output_tokens`      | number | STT output (text) tokens. Token-billed STT only. |
+| `data.usage.usage_schema_version`   | number | `2` for calls recorded from 2026-09 onwards. `1` marks an older record that carries only the non-cached LLM and TTS counts; treat its missing fields as unknown, not as zero. |
+
+!!! warning "Cached token counts are subsets"
+    `llm_input_cached_tokens` is part of `llm_total_tokens` already, and each cached
+    per-modality count is part of its matching input count. To price a call, split the input
+    into cached and uncached (`llm_input_text_tokens - llm_input_cached_text_tokens` is the
+    uncached text) and apply the two rates. Adding the cached fields to the input fields
+    charges those tokens twice.
 
 !!! note "Why STT fields are empty outside cascade mode"
-    In `pipeline` and `realtime` modes the LLM transcribes internally, so that spend is already
-    counted inside its token totals — there is nothing separate to attribute. Only
-    [`cascade`](../../architecture/cascade-pipeline.md) has a standalone STT stage.
+    Only [`cascade`](../../architecture/cascade-pipeline.md) has an STT stage the agent session
+    itself owns. In `realtime` mode the LLM transcribes internally; in `pipeline` mode with the
+    default Sarvam provider the transcription runs on a parallel tap outside the session. Both
+    leave the STT fields at zero today — see
+    [Usage accounting](../../reference/usage-accounting.md) for what is and is not counted.
 
 !!! warning "Breaking change: `usage.llm_mode` → `usage.mode`"
     The old `usage.llm_mode` key was renamed to `usage.mode` (the field never selected an LLM — it

@@ -438,15 +438,31 @@ class LiveKitService:
                 "llm_model": usage_record.llm_model,
                 "llm_input_audio_tokens": usage_record.llm_input_audio_tokens,
                 "llm_input_text_tokens": usage_record.llm_input_text_tokens,
+                "llm_input_image_tokens": usage_record.llm_input_image_tokens,
                 "llm_output_audio_tokens": usage_record.llm_output_audio_tokens,
                 "llm_output_text_tokens": usage_record.llm_output_text_tokens,
                 "llm_total_tokens": usage_record.llm_total_tokens,
+                # Cached counts are a subset of the input counts above, not an addition
+                # to them — see UsageRecord in db_schemas.py before pricing off these.
+                "llm_input_cached_tokens": usage_record.llm_input_cached_tokens,
+                "llm_input_cached_audio_tokens": usage_record.llm_input_cached_audio_tokens,
+                "llm_input_cached_text_tokens": usage_record.llm_input_cached_text_tokens,
+                "llm_input_cached_image_tokens": usage_record.llm_input_cached_image_tokens,
+                "llm_input_cache_creation_tokens": usage_record.llm_input_cache_creation_tokens,
+                "llm_session_duration": usage_record.llm_session_duration,
                 "tts_characters_count": usage_record.tts_characters_count,
                 "tts_audio_duration": usage_record.tts_audio_duration,
+                # Token-billed TTS providers only; character-billed ones report zero.
+                "tts_input_tokens": usage_record.tts_input_tokens,
+                "tts_output_tokens": usage_record.tts_output_tokens,
                 # Populated in cascade mode only — see UsageRecord in db_schemas.py.
                 "stt_provider": usage_record.stt_provider,
                 "stt_model": usage_record.stt_model,
                 "stt_audio_duration": usage_record.stt_audio_duration,
+                # Token-billed STT (OpenAI) only; duration-billed providers report zero.
+                "stt_input_tokens": usage_record.stt_input_tokens,
+                "stt_output_tokens": usage_record.stt_output_tokens,
+                "usage_schema_version": usage_record.usage_schema_version,
             }
 
         payload = {

@@ -95,6 +95,7 @@ nav:
   - Reference:
     - Models & Providers: reference/models.md
     - Compatibility Matrix: reference/compatibility.md
+    - Usage Accounting: reference/usage-accounting.md
     - Troubleshooting: reference/troubleshooting.md
 
   - API Reference:

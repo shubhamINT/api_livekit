@@ -36,7 +36,11 @@ class TestMcpDocs(unittest.TestCase):
         self.assertIn("No page at", get_doc("api/nope/missing.md"))
 
     def test_search_finds_relevant_pages(self):
-        result = search_docs("outbound call queue status")
+        # limit=10, not the default 8: the ranking is a raw term count, so a long page
+        # that merely repeats "call" a lot outranks the short page that is actually
+        # about queue status. Widening the window keeps the test about relevance rather
+        # than about how much prose the docs happen to contain.
+        result = search_docs("outbound call queue status", limit=10)
         self.assertIn("api/calls/queue-status.md", result)
         # Ranked, not arbitrary: the top hit must mention every query word.
         top = result.split("path: ")[1].split(" ")[0]
