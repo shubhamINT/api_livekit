@@ -366,7 +366,7 @@ flat `UsageRecord` fields:
 | `llm_input_cached_*`, `llm_input_cache_creation_tokens` | all modes, whenever the provider reports a cache hit |
 | `tts_characters_count`, `tts_audio_duration` | `pipeline`, `cascade` |
 | `tts_input_tokens`, `tts_output_tokens` | token-billed TTS only |
-| `stt_provider`, `stt_model`, `stt_audio_duration` | **`cascade` only** |
+| `stt_provider`, `stt_model`, `stt_audio_duration` | `cascade`, plus `pipeline` when the Sarvam tap runs (self-measured — see [Usage accounting](../reference/usage-accounting.md)) |
 | `stt_input_tokens`, `stt_output_tokens` | token-billed STT (`openai`) in `cascade` only |
 | `model_usage`, `usage_schema_version`, `sdk_version` | all modes |
 

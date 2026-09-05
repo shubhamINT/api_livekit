@@ -84,17 +84,35 @@ cache writes and reports `0`.
 | LLM tokens, including cached | yes | yes | yes |
 | Modality split (audio/text/image) | text only | yes | yes |
 | TTS characters or tokens | yes | yes | not applicable — the model speaks |
-| STT | yes | **not yet** | **not yet** |
+| STT | yes | yes — the Sarvam tap, self-measured | **not yet** |
+
+## Pipeline-mode STT is measured, not reported
+
+`pipeline` mode transcribes on a parallel Sarvam tap
+(`src/core/agents/stt/sarvam_parallel.py`) that builds its own plugin STT and never hands it
+to the `AgentSession`, so nothing it emits reaches the SDK's usage collector. The tap
+therefore counts the audio itself — it sums the duration of every frame it pushes — and
+hands the total to `summarize_usage` as an `stt_usage` entry shaped exactly like one the SDK
+would have produced. It reaches both `stt_audio_duration` and the raw `model_usage` list.
+
+Two consequences worth knowing before pricing off it:
+
+- The number is what the tap **sent**, not what Sarvam reported back. Sarvam's own
+  `RECOGNITION_USAGE` event carries whatever the server put in `metrics.audio_duration`,
+  which is absent on some responses; reading it would have recorded a silent zero. Expect a
+  small difference from the invoice, never a false zero.
+- It is stream time, not speech time. `SpeechGate` zeroes non-speech samples in place and
+  returns the same frame, so gated audio still goes to Sarvam and is still counted — which
+  matches how a continuously open connection is metered.
+- The 2 s of silence the tap feeds Sarvam at hangup (`DRAIN_SILENCE_S`, so the caller's last
+  sentence comes back) is pushed on a different path and is not counted.
 
 ## Known gaps
 
-Two sources of transcription spend are not recorded yet. Both show as `0`, which is
-indistinguishable from "not used" — do not price a `pipeline` or `realtime` call as if its
-transcription were free.
+One source of transcription spend is not recorded yet. It shows as `0`, which is
+indistinguishable from "not used" — do not price a `realtime` call as if its transcription
+were free.
 
-- **Pipeline-mode Sarvam.** The parallel tap
-  (`src/core/agents/stt/sarvam_parallel.py`) builds its own plugin STT that is never handed
-  to the `AgentSession`, so its usage events reach no collector.
 - **Realtime native transcription.** The OpenAI realtime plugin receives usage on
   `conversation.item.input_audio_transcription.completed` and keeps only the transcript.
 
@@ -105,7 +123,7 @@ transcription were free.
 | Version | Meaning |
 |---|---|
 | `1` | Written before 2026-09. Flat LLM and TTS counts only; no cached totals, no token-billed STT/TTS fields, no `model_usage`. Every field added since reads `0` because it was never captured — treat it as unknown, not as zero. |
-| `2` | Everything on this page, except the two gaps above. |
+| `2` | Everything on this page, except the gap above. |
 
 There is no backfill. The data was never collected, so it cannot be recovered.
 

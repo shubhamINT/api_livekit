@@ -53,17 +53,17 @@ installed `livekit-agents` 1.6.7, on 2026-09-04:
 
 ## Doing now
 
-**PR 2 — pipeline Sarvam STT tap.** Pipeline mode pays Sarvam on every call and records
-nothing, because the tap in `src/core/agents/stt/sarvam_parallel.py` builds a standalone
-plugin STT that is never handed to `AgentSession`, so its `RECOGNITION_USAGE` events reach
-no collector. Plan: pass an accumulator into `run_sarvam_parallel_stt`, handle
-`RECOGNITION_USAGE` in the event loop that already runs there, merge the result at teardown
-as a synthetic `STTModelUsage` so every raw `model_usage` row has one shape, and drop the
-`stt_provider = None unless cascade` rule in `src/core/agents/session.py`.
+**PR 3 — realtime native transcription.** The last unmetered component. The OpenAI realtime
+plugin receives usage on `conversation.item.input_audio_transcription.completed` and keeps
+only the transcript (`realtime_model.py:1929`). Plan: wrap
+`_handle_conversion_item_input_audio_transcription_completed` to read `event.usage` before
+delegating, feed a synthetic `STTModelUsage` through the same `extra_usage` parameter PR 2
+added, and assert the patched symbol exists at import so a future SDK bump fails loudly
+instead of silently recording zero.
 
-Still outstanding from PR 0: the manual call verification, which needs a real deployment —
-one inbound Exotel call and one cascade call, checking that audio flows both ways and the
-transcript and usage record land.
+Still outstanding, both needing a real deployment: the PR 0 manual verification (one inbound
+Exotel call and one cascade call — audio both ways, transcript, usage record) and the PR 1 /
+PR 2 verification described in their sections below.
 
 ## Done
 
@@ -148,14 +148,40 @@ realtime native transcription (PR 3).
 Gates: 479 tests OK, `mkdocs build --strict` clean, 15 Mermaid diagrams parse, ruff on the
 touched files reports only pre-existing violations.
 
+**PR 2 — pipeline Sarvam STT is recorded.** `SttUsage` (a two-field dataclass in
+`src/core/agents/stt/sarvam_parallel.py`) is handed to `run_sarvam_parallel_stt`; the audio
+pump adds each frame's duration to it, and teardown turns it into an `STTModelUsage` that
+goes to `summarize_usage(session, extra_usage=...)`. It lands in the flat `stt_*` columns
+and in the raw `model_usage` list with the same shape as a cascade STT row, so pricing needs
+no per-mode branch. `stt_provider` now records `"sarvam"` on a pipeline call that ran the
+tap, not only on cascade.
+
+Changed from the plan, agreed with the user: the tap does **not** read Sarvam's own
+`RECOGNITION_USAGE` event. That event carries whatever the server put in
+`metrics.audio_duration` (`plugins/sarvam/stt.py:1585`), which is absent on some responses
+and would record a silent zero — the exact failure this effort exists to remove. Measuring
+the frames the tap pushes gives one number from one source with no branch. It can differ
+slightly from Sarvam's invoice; it is never falsely zero. The `DRAIN_SILENCE_S` silence
+pushed at hangup is fed from `_stop_watch`, not the pump, so it stays out by construction.
+
+The tally is stream time, not speech time: `SpeechGate` zeroes non-speech samples in place
+and returns the same frame, so gated audio still goes over the open connection and is still
+counted. That is deliberate and now stated in the code and in
+`docs/reference/usage-accounting.md`; an earlier line in `docs/architecture/audio-pipeline.md`
+claimed the opposite and was corrected.
+
+`_use_sarvam_stt` keeps its single existing initialisation (`session.py:663`), with the
+comment extended to say why it must stay unconditional: `_persist_usage` reads it and
+swallows exceptions, so an unbound name would silently zero the whole record.
+
+Gates: 482 tests OK, `mkdocs build --strict` clean, 15 Mermaid diagrams parse, ruff on the
+touched files reports only pre-existing violations.
+
+Manual, needs a deployment: one pipeline call with `assistant_stt_model` unset or `sarvam`.
+Expect `stt_provider == "sarvam"`, `stt_audio_duration` roughly the caller's speaking time,
+and one `stt_usage` entry in `model_usage`. A cascade call must be unchanged.
+
 ## Left
-
-**PR 2 — pipeline Sarvam STT tap.**
-
-- Pass an accumulator into `run_sarvam_parallel_stt` and handle `RECOGNITION_USAGE` in the
-  existing event loop.
-- Merge it at teardown as a synthetic `STTModelUsage` so every raw row has one shape.
-- Drop the `stt_provider = None unless cascade` rule in `src/core/agents/session.py`.
 
 **PR 3 — realtime native transcription.**
 
@@ -177,11 +203,11 @@ tests live in `TestSummarizeUsage`, the reference page is
 `docs/reference/usage-accounting.md`, and troubleshooting has the "usage record is all
 zeros" section. What is left depends on PR 2 to PR 4 landing first:
 
-- Per-mode coverage that the earlier PRs make meaningful: pipeline + Sarvam and realtime +
-  native both currently record zero STT on purpose, so the assertions only become real once
-  those taps report.
-- Remove the "Known gaps" section from `docs/reference/usage-accounting.md` as each gap
-  closes, and update the per-mode table with it.
+- Per-mode coverage that the earlier PRs make meaningful: realtime + native still records
+  zero STT on purpose, so those assertions only become real once PR 3 lands. Pipeline +
+  Sarvam is covered as of PR 2 (`tests/test_transcript_coalescer.py::TestSarvamUsageTally`).
+- Remove the "Known gaps" section from `docs/reference/usage-accounting.md` once PR 3 closes
+  the last gap, and update the per-mode table with it.
 
 **Follow-up left by PR 0 — the deprecated Python CLI.**
 

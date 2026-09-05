@@ -203,6 +203,7 @@ sequenceDiagram
 - Spawned once after `wait_for_participant()` returns, scoped to the caller's identity. Late-binds if the audio track was already published. The task handle is kept (`_sarvam_task`) so teardown can tell the two STT paths apart, and so a crash inside the tap is not swallowed.
 - Stop signal: re-uses the existing `_sarvam_stop = asyncio.Event()` that already gates the Sarvam TTS keepalive — both exit on the same teardown.
 - Frame pump: `rtc.AudioStream(track, sample_rate=16000, num_channels=1)` upsamples 8 kHz G.711 phone audio in-process; frames pushed via `stream.push_frame(frame)`.
+- Usage: the pump also sums each frame's duration into the `SttUsage` tally it was handed, which teardown turns into the call's `stt_usage` entry. The tap's plugin STT never reaches the `AgentSession`, so this is the only place the seconds can be counted — see [Usage accounting](../reference/usage-accounting.md).
 - Duplicate-write guard: `conversation_item_added` short-circuits when `event.item.role == "user" and _use_sarvam_stt`, so OpenAI's empty / stale user item never reaches the DB.
 - Shared transcript helper: `_enqueue_transcript(speaker, text, timestamp=None)` queues the DB write — used by both the Sarvam callback and the OpenAI assistant-role path. Single source of truth for the `add_transcript` call shape.
 - Silence watchdog: the coalescer's emit callback calls `silence_watchdog.on_user_message()` to reset the reprompt timer, preserving parity with the OpenAI-only path.

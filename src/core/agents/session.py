@@ -47,6 +47,7 @@ from src.core.model_support.capabilities import (
 from src.core.agents.tts import create_tts, maintain_sarvam_connection
 from src.core.agents.stt import (
     FinalCoalescer,
+    SttUsage,
     create_stt,
     build_native_stt_prompt,
     noise_reduction_for,
@@ -411,7 +412,12 @@ async def entrypoint(ctx: JobContext):
     # Persist usage metrics at call end
     async def _persist_usage():
         try:
-            metered = summarize_usage(session)
+            # The Sarvam tap runs outside the AgentSession, so its seconds reach no
+            # collector — hand them in as an entry shaped like one the SDK produced.
+            metered = summarize_usage(
+                session,
+                extra_usage=[_sarvam_usage.to_model_usage()] if _use_sarvam_stt else [],
+            )
             telephony_provider = job_metadata.get("call_service") or job_metadata.get("service")
             if job_metadata.get("call_type") == "web":
                 telephony_provider = None
@@ -434,9 +440,14 @@ async def entrypoint(ctx: JobContext):
                 mode=assistant.assistant_mode,
                 llm_realtime_provider=llm_realtime_provider,
                 tts_provider=assistant.assistant_tts_model if not is_realtime else None,
-                # Only cascade has a standalone STT stage worth attributing cost to; the
-                # other modes transcribe inside the LLM, so the spend is in its tokens.
-                stt_provider=(assistant.assistant_stt_model or "sarvam") if is_cascade else None,
+                # Cascade owns an STT stage inside the session; pipeline mode pays Sarvam
+                # on the parallel tap. Only realtime has no separate STT bill — it
+                # transcribes inside the LLM, so that spend is in its tokens.
+                stt_provider=(
+                    (assistant.assistant_stt_model or "sarvam")
+                    if is_cascade
+                    else ("sarvam" if _use_sarvam_stt else None)
+                ),
                 call_service=telephony_provider,
                 call_duration_minutes=call_duration,
                 **metered,
@@ -447,6 +458,7 @@ async def entrypoint(ctx: JobContext):
                 f"llm_tokens={usage.llm_total_tokens} | "
                 f"llm_cached={usage.llm_input_cached_tokens} | "
                 f"tts_chars={usage.tts_characters_count} | "
+                f"stt={usage.stt_provider or 'none'} | "
                 f"stt_audio={usage.stt_audio_duration:.1f}s | "
                 f"stt_tokens={usage.stt_input_tokens + usage.stt_output_tokens}"
             )
@@ -455,6 +467,8 @@ async def entrypoint(ctx: JobContext):
 
     _sarvam_stop = asyncio.Event()
     _sarvam_task: asyncio.Task | None = None
+    # Filled by the tap as it pumps audio; read by _persist_usage at teardown.
+    _sarvam_usage = SttUsage()
     # Assigned below, once _enqueue_transcript exists. Declared here because teardown reads it.
     _user_coalescer: FinalCoalescer | None = None
 
@@ -642,7 +656,10 @@ async def entrypoint(ctx: JobContext):
     llm_config = assistant.assistant_llm_config or {}
     _default_provider = "gemini" if is_realtime else "openai"
     realtime_provider = (llm_config.get("provider") or _default_provider).lower()
-    # Set inside the half-cascade branches when Sarvam parallel STT is active.
+    # Set inside the half-cascade branches when Sarvam parallel STT is active. Bound here,
+    # unconditionally and before the session exists, because _persist_usage reads it to
+    # decide whether to bill the tap's audio — and it swallows exceptions, so an unbound
+    # name would silently zero the whole usage record instead of raising.
     _use_sarvam_stt = False
     _stt_provider, _stt_config = resolve_stt(assistant)
 
@@ -1235,6 +1252,7 @@ async def entrypoint(ctx: JobContext):
             target_identity=primary_participant_identity,
             coalescer=_user_coalescer,
             stop_event=_sarvam_stop,
+            usage=_sarvam_usage,
             api_key=_stt_config.get("api_key"),
             model=_stt_config.get("model"),
             language=_stt_config.get("language"),

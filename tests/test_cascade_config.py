@@ -1721,6 +1721,36 @@ class TestSummarizeUsage(unittest.TestCase):
         self.assertEqual(metered["usage_schema_version"], 2)
         self.assertEqual(metered["sdk_version"], livekit_agents_version)
 
+    def test_extra_usage_is_folded_like_a_session_entry(self):
+        """Pipeline mode transcribes on a Sarvam tap that the session's collector never
+        sees. Its seconds come in through extra_usage and must reach both the flat
+        columns and the raw list, or a pipeline call prices as if transcription were free.
+        """
+        metered = summarize_usage(
+            SimpleNamespace(usage=AgentSessionUsage(model_usage=[])),
+            extra_usage=[
+                STTModelUsage(provider="sarvam", model="saaras:v3", audio_duration=42.0)
+            ],
+        )
+        self.assertEqual(metered["stt_audio_duration"], 42.0)
+        self.assertEqual(metered["stt_model"], "saaras:v3")
+        self.assertEqual(
+            [(e["type"], e["model"]) for e in metered["model_usage"]],
+            [("stt_usage", "saaras:v3")],
+        )
+
+    def test_extra_usage_survives_an_unreadable_session(self):
+        """The tap measured its own audio. An SDK failure on an unrelated component must
+        not take that number down with it."""
+        metered = summarize_usage(
+            SimpleNamespace(),  # no .usage at all
+            extra_usage=[
+                STTModelUsage(provider="sarvam", model="saaras:v3", audio_duration=42.0)
+            ],
+        )
+        self.assertEqual(metered["stt_audio_duration"], 42.0)
+        self.assertEqual(metered["llm_total_tokens"], 0)
+
 
 class TestStaleKnobBackfill(unittest.TestCase):
     """scripts/migrate_llm_knobs.py — which stored knobs the backfill would clear."""

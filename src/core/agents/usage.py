@@ -39,14 +39,21 @@ def _sdk_version() -> str | None:
         return None
 
 
-def summarize_usage(session) -> dict:
+def summarize_usage(session, extra_usage=()) -> dict:
     """Return UsageRecord field values for `session`. Never raises — usage is not
-    worth losing a call record over, so on any failure it degrades to zeros."""
+    worth losing a call record over, so on any failure it degrades to zeros.
+
+    `extra_usage` carries entries the session's own collector never saw, because the
+    component runs outside the AgentSession — today that is the pipeline-mode Sarvam STT
+    tap. They are the same typed models the SDK produces, so everything below treats them
+    identically, and they survive a failed `session.usage` read on purpose.
+    """
     try:
-        entries = session.usage.model_usage
+        entries = list(session.usage.model_usage)
     except Exception as e:
         logger.warning(f"Could not read session usage: {e}")
         entries = []  # same code path below, so every field still gets its zero
+    entries += extra_usage
 
     llm = [e for e in entries if e.type == "llm_usage"]
     tts = [e for e in entries if e.type == "tts_usage"]

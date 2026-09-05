@@ -370,7 +370,8 @@ webhook's `data.usage` block is missing entirely).
 |---|---|
 | No `usage_records` row at all | The worker died before teardown, or the row lost a race on the unique `room_name` index. The worker log has `Failed to persist usage record`. |
 | Every field `0`, `model_usage` empty, `Could not read session usage` in the log | Teardown ran before `AgentSession` was built — the call failed during setup. Check for an earlier error in the same job. |
-| LLM fields populated, STT fields `0` | Expected outside `cascade`. Pipeline-mode Sarvam and realtime native transcription are not metered yet — see [Usage accounting](usage-accounting.md#known-gaps). |
+| LLM fields populated, STT fields `0` on a `realtime` call | Expected. Native transcription happens inside the LLM and is not metered yet — see [Usage accounting](usage-accounting.md#known-gaps). |
+| LLM fields populated, STT fields `0` on a `pipeline` call | Not expected. The Sarvam tap did not run: `assistant_stt_model` is `native` (or a cascade-only provider that fell back to native), or the call was `text_only`. The worker log line at teardown ends with `stt=none`. |
 | `usage_schema_version` is `1` | An old record. The cached-token and token-billed STT/TTS fields did not exist when it was written; they read `0` because nothing was captured, not because nothing was used. |
 | Cached tokens `0` on a cascade call | Normal on a short call. OpenAI only caches a prompt above its own minimum length, and the first turn never hits. |
 

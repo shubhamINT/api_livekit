@@ -149,12 +149,13 @@ Content-Type: application/json
     uncached text) and apply the two rates. Adding the cached fields to the input fields
     charges those tokens twice.
 
-!!! note "Why STT fields are empty outside cascade mode"
+!!! note "Why STT fields are empty in realtime mode"
     Only [`cascade`](../../architecture/cascade-pipeline.md) has an STT stage the agent session
-    itself owns. In `realtime` mode the LLM transcribes internally; in `pipeline` mode with the
-    default Sarvam provider the transcription runs on a parallel tap outside the session. Both
-    leave the STT fields at zero today — see
-    [Usage accounting](../../reference/usage-accounting.md) for what is and is not counted.
+    itself owns. In `pipeline` mode with the default Sarvam provider the transcription runs on a
+    parallel tap outside the session, which measures its own audio and reports it — the seconds
+    are the audio the tap sent, so expect a small difference from Sarvam's invoice. In
+    `realtime` mode the LLM transcribes internally and that spend is still not counted at all —
+    see [Usage accounting](../../reference/usage-accounting.md).
 
 !!! warning "Breaking change: `usage.llm_mode` → `usage.mode`"
     The old `usage.llm_mode` key was renamed to `usage.mode` (the field never selected an LLM — it
