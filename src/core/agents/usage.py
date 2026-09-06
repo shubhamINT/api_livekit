@@ -88,6 +88,10 @@ def summarize_usage(session, extra_usage=()) -> dict:
         "stt_model": _models(stt),
         "stt_audio_duration": total(stt, "audio_duration"),
         "stt_input_tokens": total(stt, "input_tokens"),
+        # Subsets of stt_input_tokens. Only NativeSttModelUsage carries them; `total` reads
+        # them with getattr, so a plain SDK entry contributes zero.
+        "stt_input_audio_tokens": total(stt, "input_audio_tokens"),
+        "stt_input_text_tokens": total(stt, "input_text_tokens"),
         "stt_output_tokens": total(stt, "output_tokens"),
         # Full dump, zeros included: pricing reads keys, it should never have to decide
         # whether a missing one means zero or means the SDK stopped reporting it.

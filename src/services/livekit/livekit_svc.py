@@ -455,12 +455,15 @@ class LiveKitService:
                 # Token-billed TTS providers only; character-billed ones report zero.
                 "tts_input_tokens": usage_record.tts_input_tokens,
                 "tts_output_tokens": usage_record.tts_output_tokens,
-                # Populated in cascade mode only — see UsageRecord in db_schemas.py.
+                # Zero only in Gemini realtime — see UsageRecord in db_schemas.py.
                 "stt_provider": usage_record.stt_provider,
                 "stt_model": usage_record.stt_model,
                 "stt_audio_duration": usage_record.stt_audio_duration,
                 # Token-billed STT (OpenAI) only; duration-billed providers report zero.
                 "stt_input_tokens": usage_record.stt_input_tokens,
+                # Subsets of stt_input_tokens, never additional to it.
+                "stt_input_audio_tokens": usage_record.stt_input_audio_tokens,
+                "stt_input_text_tokens": usage_record.stt_input_text_tokens,
                 "stt_output_tokens": usage_record.stt_output_tokens,
                 "usage_schema_version": usage_record.usage_schema_version,
             }

@@ -84,7 +84,7 @@ cache writes and reports `0`.
 | LLM tokens, including cached | yes | yes | yes |
 | Modality split (audio/text/image) | text only | yes | yes |
 | TTS characters or tokens | yes | yes | not applicable — the model speaks |
-| STT | yes | yes — the Sarvam tap, self-measured | **not yet** |
+| STT | yes | yes — the Sarvam tap (self-measured) or the Realtime API's own ASR | yes on OpenAI; **never** on Gemini, which reports none |
 
 ## Pipeline-mode STT is measured, not reported
 
@@ -107,14 +107,36 @@ Two consequences worth knowing before pricing off it:
 - The 2 s of silence the tap feeds Sarvam at hangup (`DRAIN_SILENCE_S`, so the caller's last
   sentence comes back) is pushed on a different path and is not counted.
 
-## Known gaps
+## Realtime transcription is billed separately from the realtime model
 
-One source of transcription spend is not recorded yet. It shows as `0`, which is
-indistinguishable from "not used" — do not price a `realtime` call as if its transcription
-were free.
+When a `realtime` call runs, or a `pipeline` call whose STT provider is not Sarvam, the
+OpenAI Realtime API transcribes the caller with a separate ASR model
+(`gpt-4o-mini-transcribe`) and bills it on that model's own pricing. It reports the usage on
+every `conversation.item.input_audio_transcription.completed` event, but the LiveKit plugin's
+handler keeps the transcript and drops the usage, so it reaches no collector.
 
-- **Realtime native transcription.** The OpenAI realtime plugin receives usage on
-  `conversation.item.input_audio_transcription.completed` and keeps only the transcript.
+`src/core/agents/stt/native_usage.py` reads it off the plugin's public raw event stream
+(`openai_server_event_received`) and hands it to `summarize_usage` as an `stt_usage` entry.
+The numbers are OpenAI's own, not an estimate. It is token-billed, so
+`stt_audio_duration` stays `0` and the tokens land in `stt_input_tokens` /
+`stt_output_tokens`, split further into:
+
+```text
+stt_input_audio_tokens + stt_input_text_tokens  ==  stt_input_tokens
+```
+
+Both are subsets, never additional — the same rule as the cached LLM counts above. They are
+separated because OpenAI charges a different rate for each, and any provider that does not
+report the split leaves them at `0`.
+
+`stt_provider` reads `openai` for two different things: the `cascade` OpenAI STT plugin, and
+this ASR. `stt_model` separates them (`gpt-4o-mini-transcribe` here), so price on the
+`(provider, model)` pair rather than on the provider alone.
+
+**Gemini realtime reports no transcription usage at all**, and none is missing: its Live API
+folds input audio into `prompt_tokens_details`, so that spend is already inside the LLM
+token counts. A Gemini `realtime` call therefore stores `stt_provider = null` and zero STT
+columns by design.
 
 ## Schema versions
 
@@ -123,7 +145,7 @@ were free.
 | Version | Meaning |
 |---|---|
 | `1` | Written before 2026-09. Flat LLM and TTS counts only; no cached totals, no token-billed STT/TTS fields, no `model_usage`. Every field added since reads `0` because it was never captured — treat it as unknown, not as zero. |
-| `2` | Everything on this page, except the gap above. |
+| `2` | Everything on this page. |
 
 There is no backfill. The data was never collected, so it cannot be recovered.
 

@@ -53,17 +53,14 @@ installed `livekit-agents` 1.6.7, on 2026-09-04:
 
 ## Doing now
 
-**PR 3 — realtime native transcription.** The last unmetered component. The OpenAI realtime
-plugin receives usage on `conversation.item.input_audio_transcription.completed` and keeps
-only the transcript (`realtime_model.py:1929`). Plan: wrap
-`_handle_conversion_item_input_audio_transcription_completed` to read `event.usage` before
-delegating, feed a synthetic `STTModelUsage` through the same `extra_usage` parameter PR 2
-added, and assert the patched symbol exists at import so a future SDK bump fails loudly
-instead of silently recording zero.
+**PR 4 — durability.** Usage is written once, at teardown. A worker that crashes mid-call
+leaves no record at all. Plan: subscribe to `session_usage_updated` and upsert on the unique
+`room_name`, throttled to at most one write per 15 s, and make the teardown write an upsert
+too — which also removes the duplicate-key path when two teardown routes race.
 
-Still outstanding, both needing a real deployment: the PR 0 manual verification (one inbound
+Still outstanding, all needing a real deployment: the PR 0 manual verification (one inbound
 Exotel call and one cascade call — audio both ways, transcript, usage record) and the PR 1 /
-PR 2 verification described in their sections below.
+PR 2 / PR 3 verification described in their sections below.
 
 ## Done
 
@@ -181,15 +178,66 @@ Manual, needs a deployment: one pipeline call with `assistant_stt_model` unset o
 Expect `stt_provider == "sarvam"`, `stt_audio_duration` roughly the caller's speaking time,
 and one `stt_usage` entry in `model_usage`. A cascade call must be unchanged.
 
+**PR 3 — realtime native transcription is recorded.** The last unmetered component. The
+OpenAI Realtime API transcribes the caller with a separate ASR model (`gpt-4o-mini-transcribe`)
+and bills it on that model's own pricing, reporting the usage on every
+`conversation.item.input_audio_transcription.completed` event. The plugin's handler keeps the
+transcript and drops `usage`, so both `realtime` mode and `pipeline` mode without the Sarvam
+tap stored zero.
+
+`src/core/agents/stt/native_usage.py` holds the whole change: `NativeSttUsage` (the tally),
+`NativeSttModelUsage` (an `STTModelUsage` subclass that also carries the audio/text split) and
+`MeteredRealtimeModel`. Both OpenAI branches in `session.py` build the subclass instead of
+`realtime.RealtimeModel`; teardown appends the entry to the same `extra_usage` list PR 2
+introduced. `stt_provider` gains a third case, `"openai"`.
+
+Changed from the plan, agreed with the user: **no monkeypatch.** The plan called for wrapping
+the private `_handle_conversion_item_input_audio_transcription_completed` with an import-time
+assert. That is unnecessary — `RealtimeSession` already emits every raw server frame as
+`openai_server_event_received`, a documented public event (`realtime_model.py:869-880`,
+emitted at `:1173`), and the SDK calls the public `session()` once per agent activity
+(`agents/voice/agent_activity.py:1073`). Subclassing and overriding `session()` attaches the
+listener with no private symbol, no assert, and no `openai.types` import: the plugin parses
+events with `.construct()`, so the payload arrives as the plain dict off the wire.
+
+Also agreed with the user: **keep the audio/text token split.** OpenAI reports
+`usage.input_token_details.{audio_tokens,text_tokens}` and charges a different rate for each.
+`STTModelUsage` has no field for it, so the subclass carries it into two new `UsageRecord`
+columns, `stt_input_audio_tokens` / `stt_input_text_tokens` — subsets of `stt_input_tokens`,
+never additional. `summarize_usage` reads them with `getattr(..., 0)`, so a plain SDK entry
+still contributes zero and nothing else changed. `usage_schema_version` stays `2`: a record
+written before this PR reports `0` for both, which is also what a duration-billed provider
+reports.
+
+Two deliberate behaviours: `observe()` never raises (it runs inside the plugin's websocket
+read loop, where an exception would end the call over a metric), and `to_model_usage()`
+returns `None` when nothing was transcribed, so a call that ran no ASR records no entry at all
+rather than a zero row that reads like a missing measurement.
+
+Gemini needed no code and is not a gap: its Live API reports no per-transcription usage
+because the input audio is already inside `prompt_tokens_details`, so that spend is in the LLM
+numbers. A Gemini `realtime` call is now the only configuration that stores `stt_provider =
+null` by design, and the docs say so instead of listing a known gap.
+
+The `gpt-4o-mini-transcribe` literal moved out of `session.py` into `NATIVE_TRANSCRIBE_MODEL`
+beside the tally, so the model that incurs the cost and the model recorded against it cannot
+drift apart.
+
+Gates: 490 tests OK, `mkdocs build --strict` clean, 15 Mermaid diagrams parse, ruff on the
+touched files reports only pre-existing violation classes (the one hit on the new file is
+BLE001 on the deliberate never-raise catch).
+
+Manual, needs a deployment:
+
+- One `realtime` (OpenAI) call → `stt_provider == "openai"`, `stt_model ==
+  "gpt-4o-mini-transcribe"`, non-zero `stt_input_tokens` with `stt_input_audio_tokens` making
+  up most of it, and one `stt_usage` entry in `model_usage`.
+- One `pipeline` call with `assistant_stt_model = "native"` → same.
+- One `pipeline` call with Sarvam → unchanged from PR 2 (no OpenAI entry, because
+  `input_audio_transcription` is `None` there).
+- One `realtime` Gemini call → STT fields still `0`, by design.
+
 ## Left
-
-**PR 3 — realtime native transcription.**
-
-- Wrap `_handle_conversion_item_input_audio_transcription_completed` to read `event.usage`
-  before delegating, and feed a synthetic `STTModelUsage`.
-- Assert the patched symbol exists at import so a future SDK bump fails loudly instead of
-  silently recording zero.
-- Applies to `realtime` mode always, and to `pipeline` whenever the STT provider is not Sarvam.
 
 **PR 4 — durability.**
 
@@ -201,13 +249,13 @@ and one `stt_usage` entry in `model_usage`. A cascade call must be unchanged.
 **PR 5 — close out the tests and docs.** Most of this shipped with PR 1: the field-level
 tests live in `TestSummarizeUsage`, the reference page is
 `docs/reference/usage-accounting.md`, and troubleshooting has the "usage record is all
-zeros" section. What is left depends on PR 2 to PR 4 landing first:
+zeros" section. Only PR 4 is still outstanding:
 
-- Per-mode coverage that the earlier PRs make meaningful: realtime + native still records
-  zero STT on purpose, so those assertions only become real once PR 3 lands. Pipeline +
-  Sarvam is covered as of PR 2 (`tests/test_transcript_coalescer.py::TestSarvamUsageTally`).
-- Remove the "Known gaps" section from `docs/reference/usage-accounting.md` once PR 3 closes
-  the last gap, and update the per-mode table with it.
+- Per-mode coverage is now done: pipeline + Sarvam landed with PR 2
+  (`tests/test_transcript_coalescer.py::TestSarvamUsageTally`), realtime + native with PR 3
+  (`tests/test_native_stt_usage.py`).
+- The "Known gaps" section is gone from `docs/reference/usage-accounting.md`; PR 3 closed the
+  last one. What remains for PR 5 is whatever PR 4 adds.
 
 **Follow-up left by PR 0 — the deprecated Python CLI.**
 

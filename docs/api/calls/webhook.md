@@ -76,6 +76,8 @@ Content-Type: application/json
       "stt_model": "saaras:v3",
       "stt_audio_duration": 41.75,
       "stt_input_tokens": 0,
+      "stt_input_audio_tokens": 0,
+      "stt_input_text_tokens": 0,
       "stt_output_tokens": 0,
       "usage_schema_version": 2
     }
@@ -135,10 +137,12 @@ Content-Type: application/json
 | `data.usage.tts_audio_duration`     | number | TTS audio duration in seconds.        |
 | `data.usage.tts_input_tokens`       | number | TTS input tokens. Token-billed TTS only; `0` for character-billed providers. |
 | `data.usage.tts_output_tokens`      | number | TTS output (audio) tokens. Token-billed TTS only. |
-| `data.usage.stt_provider`           | string | STT provider. **`cascade` mode only**, `null` otherwise. |
-| `data.usage.stt_model`              | string | STT model. **`cascade` mode only**, `null` otherwise. |
-| `data.usage.stt_audio_duration`     | number | Seconds of audio transcribed. **`cascade` mode only**, `0` otherwise. |
-| `data.usage.stt_input_tokens`       | number | STT input (audio) tokens. Token-billed STT (`openai`) only; `0` for duration-billed providers. |
+| `data.usage.stt_provider`           | string | Who transcribed the caller: the `cascade` STT stage, the `pipeline` Sarvam tap, or `openai` for the Realtime API's own ASR. `null` only on a Gemini `realtime` call. |
+| `data.usage.stt_model`              | string | STT model, e.g. `saaras:v3` or `gpt-4o-mini-transcribe`. `null` when `stt_provider` is. |
+| `data.usage.stt_audio_duration`     | number | Seconds of audio transcribed. `0` for token-billed STT, which reports tokens instead. |
+| `data.usage.stt_input_tokens`       | number | STT input tokens. Token-billed STT (`openai`) only; `0` for duration-billed providers. |
+| `data.usage.stt_input_audio_tokens` | number | Audio part of `stt_input_tokens` — a subset, not additional. `0` unless the provider reports the split. |
+| `data.usage.stt_input_text_tokens`  | number | Text part of `stt_input_tokens` — a subset, not additional. |
 | `data.usage.stt_output_tokens`      | number | STT output (text) tokens. Token-billed STT only. |
 | `data.usage.usage_schema_version`   | number | `2` for calls recorded from 2026-09 onwards. `1` marks an older record that carries only the non-cached LLM and TTS counts; treat its missing fields as unknown, not as zero. |
 
@@ -149,13 +153,15 @@ Content-Type: application/json
     uncached text) and apply the two rates. Adding the cached fields to the input fields
     charges those tokens twice.
 
-!!! note "Why STT fields are empty in realtime mode"
-    Only [`cascade`](../../architecture/cascade-pipeline.md) has an STT stage the agent session
-    itself owns. In `pipeline` mode with the default Sarvam provider the transcription runs on a
-    parallel tap outside the session, which measures its own audio and reports it — the seconds
-    are the audio the tap sent, so expect a small difference from Sarvam's invoice. In
-    `realtime` mode the LLM transcribes internally and that spend is still not counted at all —
-    see [Usage accounting](../../reference/usage-accounting.md).
+!!! note "Where the STT numbers come from, and what unit they are in"
+    Three different components can transcribe a call, and they are not billed the same way.
+    [`cascade`](../../architecture/cascade-pipeline.md) owns an STT stage inside the agent
+    session. `pipeline` mode with the default Sarvam provider runs a parallel tap outside the
+    session that measures its own audio, so expect a small difference from Sarvam's invoice.
+    `realtime`, and `pipeline` without Sarvam, use the OpenAI Realtime API's own ASR, which is
+    token-billed: `stt_audio_duration` stays `0` and the tokens carry the cost. Only a Gemini
+    `realtime` call reports nothing, because its input audio is already inside the LLM token
+    counts — see [Usage accounting](../../reference/usage-accounting.md).
 
 !!! warning "Breaking change: `usage.llm_mode` → `usage.mode`"
     The old `usage.llm_mode` key was renamed to `usage.mode` (the field never selected an LLM — it

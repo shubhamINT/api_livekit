@@ -370,8 +370,10 @@ webhook's `data.usage` block is missing entirely).
 |---|---|
 | No `usage_records` row at all | The worker died before teardown, or the row lost a race on the unique `room_name` index. The worker log has `Failed to persist usage record`. |
 | Every field `0`, `model_usage` empty, `Could not read session usage` in the log | Teardown ran before `AgentSession` was built — the call failed during setup. Check for an earlier error in the same job. |
-| LLM fields populated, STT fields `0` on a `realtime` call | Expected. Native transcription happens inside the LLM and is not metered yet — see [Usage accounting](usage-accounting.md#known-gaps). |
-| LLM fields populated, STT fields `0` on a `pipeline` call | Not expected. The Sarvam tap did not run: `assistant_stt_model` is `native` (or a cascade-only provider that fell back to native), or the call was `text_only`. The worker log line at teardown ends with `stt=none`. |
+| STT fields `0` on a Gemini `realtime` call | Expected, and nothing is missing. Gemini's Live API reports no per-transcription usage; the caller's audio is already inside the LLM prompt tokens. |
+| STT fields `0` on an OpenAI `realtime` call | Not expected. The Realtime API's own ASR reports usage on every transcription, so a zero means no transcription ran at all — check that `input_audio_transcription` was configured. The teardown log line shows `stt=none`. |
+| STT fields `0` on a `pipeline` call | Not expected either way. With Sarvam, the tap did not run (`text_only`, or `assistant_stt_model` fell back to native); without it, the Realtime API's ASR reported nothing. The teardown log line shows `stt=none`. |
+| `stt_audio_duration` is `0` but `stt_input_tokens` is not | Correct for token-billed STT. The OpenAI ASR charges per token, not per second; `stt_input_audio_tokens` carries the audio share. |
 | `usage_schema_version` is `1` | An old record. The cached-token and token-billed STT/TTS fields did not exist when it was written; they read `0` because nothing was captured, not because nothing was used. |
 | Cached tokens `0` on a cascade call | Normal on a short call. OpenAI only caches a prompt above its own minimum length, and the first turn never hits. |
 

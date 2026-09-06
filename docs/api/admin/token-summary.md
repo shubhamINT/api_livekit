@@ -43,7 +43,7 @@ Returns aggregated LLM token and TTS usage metrics across all users. Optionally 
 | `data.total_tts_audio_duration` | float | Total TTS audio duration in seconds. |
 | `data.total_tts_tokens` | integer | Total TTS input + output tokens. Token-billed TTS only; `0` for character-billed providers. |
 | `data.total_stt_tokens` | integer | Total STT input + output tokens. Token-billed STT (`openai`) only. |
-| `data.total_stt_audio_duration` | float | Total seconds of audio transcribed by a standalone STT stage (`cascade` only). |
+| `data.total_stt_audio_duration` | float | Total seconds of audio transcribed by a duration-billed STT provider (the `cascade` stage or the `pipeline` Sarvam tap). Token-billed STT reports `0` here and lands in `total_stt_tokens` instead. |
 | `data.total_call_duration_minutes` | float | Total call duration in minutes. |
 
 ## HTTP Status Codes

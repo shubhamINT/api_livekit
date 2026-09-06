@@ -46,7 +46,10 @@ from src.core.model_support.capabilities import (
 )
 from src.core.agents.tts import create_tts, maintain_sarvam_connection
 from src.core.agents.stt import (
+    NATIVE_TRANSCRIBE_MODEL,
     FinalCoalescer,
+    MeteredRealtimeModel,
+    NativeSttUsage,
     SttUsage,
     create_stt,
     build_native_stt_prompt,
@@ -412,12 +415,14 @@ async def entrypoint(ctx: JobContext):
     # Persist usage metrics at call end
     async def _persist_usage():
         try:
-            # The Sarvam tap runs outside the AgentSession, so its seconds reach no
-            # collector — hand them in as an entry shaped like one the SDK produced.
-            metered = summarize_usage(
-                session,
-                extra_usage=[_sarvam_usage.to_model_usage()] if _use_sarvam_stt else [],
-            )
+            # Two transcription paths run outside the AgentSession, so neither reaches its
+            # collector: the Sarvam tap, and the ASR the OpenAI Realtime API bills separately
+            # from the realtime model. Both hand in entries shaped like the SDK's own.
+            _native_entry = _native_usage.to_model_usage()
+            _extra = [_sarvam_usage.to_model_usage()] if _use_sarvam_stt else []
+            if _native_entry is not None:
+                _extra.append(_native_entry)
+            metered = summarize_usage(session, extra_usage=_extra)
             telephony_provider = job_metadata.get("call_service") or job_metadata.get("service")
             if job_metadata.get("call_type") == "web":
                 telephony_provider = None
@@ -433,6 +438,16 @@ async def entrypoint(ctx: JobContext):
             # LLM vendor, recorded for all modes. Resolved once at model build (see below).
             llm_realtime_provider = realtime_provider
 
+            # Three ways a call can pay for transcription: the cascade STT stage, the
+            # pipeline Sarvam tap, or the OpenAI Realtime API's own ASR. Only Gemini realtime
+            # has no separate STT bill — its input audio is inside the LLM tokens.
+            if is_cascade:
+                stt_billed_to = assistant.assistant_stt_model or "sarvam"
+            elif _use_sarvam_stt:
+                stt_billed_to = "sarvam"
+            else:
+                stt_billed_to = "openai" if _native_entry is not None else None
+
             usage = UsageRecord(
                 room_name=room_name,
                 assistant_id=assistant_id,
@@ -440,14 +455,7 @@ async def entrypoint(ctx: JobContext):
                 mode=assistant.assistant_mode,
                 llm_realtime_provider=llm_realtime_provider,
                 tts_provider=assistant.assistant_tts_model if not is_realtime else None,
-                # Cascade owns an STT stage inside the session; pipeline mode pays Sarvam
-                # on the parallel tap. Only realtime has no separate STT bill — it
-                # transcribes inside the LLM, so that spend is in its tokens.
-                stt_provider=(
-                    (assistant.assistant_stt_model or "sarvam")
-                    if is_cascade
-                    else ("sarvam" if _use_sarvam_stt else None)
-                ),
+                stt_provider=stt_billed_to,
                 call_service=telephony_provider,
                 call_duration_minutes=call_duration,
                 **metered,
@@ -460,7 +468,8 @@ async def entrypoint(ctx: JobContext):
                 f"tts_chars={usage.tts_characters_count} | "
                 f"stt={usage.stt_provider or 'none'} | "
                 f"stt_audio={usage.stt_audio_duration:.1f}s | "
-                f"stt_tokens={usage.stt_input_tokens + usage.stt_output_tokens}"
+                f"stt_tokens={usage.stt_input_tokens + usage.stt_output_tokens} "
+                f"(audio={usage.stt_input_audio_tokens})"
             )
         except Exception as e:
             logger.error(f"Failed to persist usage record: {e}", exc_info=True)
@@ -469,6 +478,9 @@ async def entrypoint(ctx: JobContext):
     _sarvam_task: asyncio.Task | None = None
     # Filled by the tap as it pumps audio; read by _persist_usage at teardown.
     _sarvam_usage = SttUsage()
+    # Same, for the transcription the OpenAI Realtime API runs and bills separately. Stays
+    # empty in cascade, in Gemini realtime, and whenever the Sarvam tap replaces it.
+    _native_usage = NativeSttUsage(model=NATIVE_TRANSCRIBE_MODEL)
     # Assigned below, once _enqueue_transcript exists. Declared here because teardown reads it.
     _user_coalescer: FinalCoalescer | None = None
 
@@ -674,7 +686,7 @@ async def entrypoint(ctx: JobContext):
     _stt_prompt = build_native_stt_prompt(
         interaction_config.preferred_languages, is_phone_call=_is_phone_call
     )
-    _native_transcription = AudioTranscription(model="gpt-4o-mini-transcribe", prompt=_stt_prompt)
+    _native_transcription = AudioTranscription(model=NATIVE_TRANSCRIBE_MODEL, prompt=_stt_prompt)
 
     # Shared by the two OpenAI realtime branches (full realtime and half-cascade). The default
     # lives in model_support so the API validates the model this line will actually pick.
@@ -751,7 +763,8 @@ async def entrypoint(ctx: JobContext):
                 api_key=llm_config.get("api_key") or settings.GOOGLE_API_KEY,
             )
         elif realtime_provider == "openai":
-            llm = realtime.RealtimeModel(
+            llm = MeteredRealtimeModel(
+                usage=_native_usage,
                 model=_openai_realtime_model,
                 voice=llm_config.get("voice", "marin"),
                 modalities=["audio"],
@@ -793,7 +806,8 @@ async def entrypoint(ctx: JobContext):
             )
 
         if realtime_provider == "openai":
-            llm = realtime.RealtimeModel(
+            llm = MeteredRealtimeModel(
+                usage=_native_usage,
                 model=_openai_realtime_model,
                 input_audio_transcription=None if _use_sarvam_stt else _native_transcription,
                 input_audio_noise_reduction=_noise_reduction,

@@ -367,12 +367,14 @@ flat `UsageRecord` fields:
 | `tts_characters_count`, `tts_audio_duration` | `pipeline`, `cascade` |
 | `tts_input_tokens`, `tts_output_tokens` | token-billed TTS only |
 | `stt_provider`, `stt_model`, `stt_audio_duration` | `cascade`, plus `pipeline` when the Sarvam tap runs (self-measured — see [Usage accounting](../reference/usage-accounting.md)) |
-| `stt_input_tokens`, `stt_output_tokens` | token-billed STT (`openai`) in `cascade` only |
+| `stt_input_tokens`, `stt_output_tokens` | token-billed STT: `openai` in `cascade`, and the Realtime API's own ASR in `pipeline` / `realtime` |
+| `stt_input_audio_tokens`, `stt_input_text_tokens` | subsets of `stt_input_tokens`, reported by the Realtime API's ASR only |
 | `model_usage`, `usage_schema_version`, `sdk_version` | all modes |
 
-STT fields stay empty in the other modes: `realtime` transcribes inside the LLM, and
-`pipeline` runs Sarvam on a parallel tap outside the agent session, where the SDK's collector
-never sees it. `model_usage` is the raw per-`(provider, model)` list and is what pricing should
+Only a Gemini `realtime` call leaves the STT fields empty, and nothing is missing there — its
+input audio is already inside the LLM prompt tokens. The other two out-of-session paths (the
+`pipeline` Sarvam tap, and the ASR the OpenAI Realtime API bills separately) are counted
+outside the SDK's collector and handed to `summarize_usage` directly. `model_usage` is the raw per-`(provider, model)` list and is what pricing should
 read — the flat columns sum across a mid-call model swap. See
 [Usage accounting](../reference/usage-accounting.md).
 

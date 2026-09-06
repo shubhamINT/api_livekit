@@ -25,7 +25,7 @@ from livekit.plugins.sarvam.stt import MODEL_CONFIGS as SARVAM_MODEL_CONFIGS
 
 from src.api.models.api_schemas import CreateAssistant, UpdateAssistant
 from src.core.agents.llm import create_llm
-from src.core.agents.stt import create_stt
+from src.core.agents.stt import NativeSttModelUsage, create_stt
 from src.core.agents.usage import summarize_usage
 from src.core.db.db_schemas import UsageRecord
 
@@ -1738,6 +1738,31 @@ class TestSummarizeUsage(unittest.TestCase):
             [(e["type"], e["model"]) for e in metered["model_usage"]],
             [("stt_usage", "saaras:v3")],
         )
+
+    def test_native_transcription_split_reaches_its_own_columns(self):
+        """OpenAI bills transcription audio and text input at different rates. The split
+        only exists on NativeSttModelUsage, so a plain SDK entry must still read zero."""
+        metered = summarize_usage(
+            SimpleNamespace(usage=AgentSessionUsage(model_usage=[])),
+            extra_usage=[
+                NativeSttModelUsage(
+                    provider="openai",
+                    model="gpt-4o-mini-transcribe",
+                    input_tokens=100,
+                    input_audio_tokens=90,
+                    input_text_tokens=10,
+                    output_tokens=12,
+                ),
+                STTModelUsage(provider="sarvam", model="saaras:v3", audio_duration=42.0),
+            ],
+        )
+        self.assertEqual(metered["stt_input_tokens"], 100)
+        self.assertEqual(metered["stt_input_audio_tokens"], 90)
+        self.assertEqual(metered["stt_input_text_tokens"], 10)
+        self.assertEqual(metered["stt_audio_duration"], 42.0)
+        self.assertEqual(metered["stt_model"], "gpt-4o-mini-transcribe, saaras:v3")
+        # The split has to survive into the raw list, which is what pricing reads.
+        self.assertEqual(metered["model_usage"][0]["input_audio_tokens"], 90)
 
     def test_extra_usage_survives_an_unreadable_session(self):
         """The tap measured its own audio. An SDK failure on an unrelated component must

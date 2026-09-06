@@ -386,14 +386,19 @@ class UsageRecord(Document):
     tts_input_tokens: int = 0
     tts_output_tokens: int = 0
 
-    # STT usage. Only a stage the AgentSession itself owns reports these, which today
-    # means cascade. In pipeline mode the Sarvam tap runs outside the session and in
-    # realtime the LLM transcribes internally, so both leave these at zero — see
-    # docs/reference/usage-accounting.md for what is and is not counted yet.
+    # STT usage. Filled from three places: the cascade STT stage the AgentSession owns, the
+    # pipeline-mode Sarvam tap (which measures its own audio), and the transcription the
+    # OpenAI Realtime API runs on the caller, which it bills separately from the realtime
+    # model itself. Only Gemini realtime leaves these at zero, because its input audio is
+    # already inside the LLM prompt tokens — see docs/reference/usage-accounting.md.
     stt_provider: Optional[str] = None  # "sarvam" | "cartesia" | "deepgram" | "elevenlabs" | "openai" | "native"
     stt_model: Optional[str] = None  # e.g. "saaras:v3", "ink-whisper", "nova-3", "scribe_v2_realtime", "gpt-4o-mini-transcribe"
     stt_audio_duration: float = 0.0  # seconds of audio transcribed
     stt_input_tokens: int = 0  # token-billed STT (OpenAI) only
+    # Subsets of stt_input_tokens, never additional to it. OpenAI bills transcription audio
+    # and text input at different rates and reports the split; other providers report 0.
+    stt_input_audio_tokens: int = 0
+    stt_input_text_tokens: int = 0
     stt_output_tokens: int = 0
 
     # Per (provider, model) usage exactly as the SDK reported it, filtered to the billable
