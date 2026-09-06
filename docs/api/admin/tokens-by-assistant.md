@@ -31,6 +31,8 @@ Returns LLM token and TTS usage metrics grouped by assistant. Optionally filter 
 | `data.assistants[].total_calls` | integer | Number of calls with usage data. |
 | `data.assistants[].total_llm_tokens` | integer | Total LLM tokens consumed. |
 | `data.assistants[].total_llm_input_audio_tokens` | integer | Total LLM input audio tokens. |
+| `data.assistants[].total_llm_input_cached_tokens` | integer | Input tokens served from the provider's prompt cache. A subset of the input totals, not an addition to them. |
+| `data.assistants[].total_llm_input_cache_creation_tokens` | integer | Input tokens written into the prompt cache. `0` on OpenAI, which does not charge for cache writes. |
 | `data.assistants[].total_llm_output_text_tokens` | integer | Total LLM output text tokens. |
 | `data.assistants[].total_tts_characters` | integer | Total TTS characters synthesized. |
 | `data.assistants[].total_tts_audio_duration` | float | Total TTS audio duration in seconds. |
@@ -66,6 +68,8 @@ curl -X GET "https://api-livekit-vyom.indusnettechnologies.com/admin/analytics/t
         "total_calls": 210,
         "total_llm_tokens": 980000,
         "total_llm_input_audio_tokens": 350000,
+        "total_llm_input_cached_tokens": 70000,
+        "total_llm_input_cache_creation_tokens": 0,
         "total_llm_output_text_tokens": 130000,
         "total_tts_characters": 580000,
         "total_tts_audio_duration": 4900.30,
@@ -77,6 +81,8 @@ curl -X GET "https://api-livekit-vyom.indusnettechnologies.com/admin/analytics/t
         "total_calls": 132,
         "total_llm_tokens": 620000,
         "total_llm_input_audio_tokens": 220000,
+        "total_llm_input_cached_tokens": 44000,
+        "total_llm_input_cache_creation_tokens": 0,
         "total_llm_output_text_tokens": 85000,
         "total_tts_characters": 370000,
         "total_tts_audio_duration": 3150.20,

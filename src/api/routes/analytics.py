@@ -3,10 +3,42 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, Query
 from src.api.dependencies import get_current_user
 from src.api.models.response_models import apiResponse
-from src.core.db.db_schemas import APIKey, CallRecord
+from src.core.db.db_schemas import APIKey, CallRecord, UsageRecord
+from src.core.db.usage_aggregations import usage_by_model_pipeline, usage_totals_pipeline
 from src.core.logger import logger
 
 router = APIRouter()
+
+
+def _usage_dates(start_date, end_date):
+    now = datetime.now(timezone.utc)
+    return end_date or now, start_date or now - timedelta(days=30)
+
+
+@router.get("/tokens/summary")
+async def tokens_summary(
+    start_date: Optional[datetime] = Query(None),
+    end_date: Optional[datetime] = Query(None),
+    current_user: APIKey = Depends(get_current_user),
+):
+    end_date, start_date = _usage_dates(start_date, end_date)
+    match = {"user_email": current_user.user_email, "created_at": {"$gte": start_date, "$lte": end_date}}
+    result = await UsageRecord.aggregate(usage_totals_pipeline(match)).to_list()
+    summary = result[0] if result else {}
+    summary.pop("_id", None)
+    return apiResponse(success=True, message="Token usage summary fetched successfully", data=summary)
+
+
+@router.get("/tokens/by-model")
+async def tokens_by_model(
+    start_date: Optional[datetime] = Query(None),
+    end_date: Optional[datetime] = Query(None),
+    current_user: APIKey = Depends(get_current_user),
+):
+    end_date, start_date = _usage_dates(start_date, end_date)
+    match = {"user_email": current_user.user_email, "created_at": {"$gte": start_date, "$lte": end_date}}
+    results = await UsageRecord.aggregate(usage_by_model_pipeline(match)).to_list()
+    return apiResponse(success=True, message="Token usage by model fetched successfully", data={"models": results})
 
 
 def _date_format_for_granularity(granularity: str) -> str:

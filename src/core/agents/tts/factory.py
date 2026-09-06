@@ -19,13 +19,13 @@ from src.services.mistral.tts import MistralTTS
 # model field would need a matching speaker field and a matrix between them.
 SARVAM_TTS_MODEL = "bulbul:v3"
 
-# ElevenLabs models with no speed control. v3 is the odd one out — and it is this
-# platform's default — so a `speed` stored against it is the likely case, not the rare one.
+# ElevenLabs models with no speed control: the whole v3 family, which includes this
+# platform's default, so a `speed` stored against one is the likely case, not the rare one.
 # https://elevenlabs.io/docs/eleven-creative/playground/text-to-speech ("Speed is not
 # available for the Eleven v3 model"). Dropped rather than sent: v3 also reads stability as
 # three discrete modes (creative/natural/robust) rather than a continuum, so its
 # voice_settings surface is genuinely narrower, not just differently tuned.
-_ELEVENLABS_NO_SPEED_MODELS = frozenset({"eleven_v3"})
+_ELEVENLABS_NO_SPEED_MODELS = frozenset({"eleven_v3", "eleven_v3_conversational"})
 
 # Per-provider system key, used when the assistant config carries no api_key of its own.
 # One variable per vendor: ELEVENLABS_API_KEY and SARVAM_API_KEY each serve both the STT and the

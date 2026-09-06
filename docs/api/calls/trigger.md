@@ -157,6 +157,7 @@ After you receive the `queue_id`, poll [Queue Status](queue-status.md) if you ne
 - Exotel setup outcomes (`busy`, `no_answer`, `rejected`, `cancelled`, `unreachable`, `timeout`, `failed`) are delivered through the end-call webhook.
 - Assistant speech/transcript processing starts only after bridge readiness (`call_answered`), not merely after `202 Accepted`.
 - The assistant starts Exotel outbound recording only after the bridge signals `call_answered` (post SIP `200 OK`).
+- Speaking itself is bounded, not instant on answer: the assistant waits for `call_answered` (up to `60s`), then for recording to start (up to `12s`), then a short fixed RTP/egress warmup pause — all raced against the callee hanging up, so a call that ends right after answer never blocks on the rest of this sequence.
 - If trunk type and `call_service` do not match (for example, Twilio trunk with `call_service="exotel"`), the API returns `400`.
 
 ### Exotel Outcome Mapping (SIP to Final `call_status`)

@@ -5,6 +5,7 @@ from src.api.dependencies import get_super_admin
 from src.api.models.response_models import apiResponse
 from src.core.db.db_schemas import APIKey, CallRecord, UsageRecord
 from src.core.logger import logger
+from src.core.db.usage_aggregations import usage_by_model_pipeline, usage_totals_pipeline
 
 router = APIRouter()
 
@@ -261,27 +262,7 @@ async def admin_tokens_summary(
         match_filter["assistant_id"] = assistant_id
 
     try:
-        pipeline = [
-            {"$match": match_filter},
-            {
-                "$group": {
-                    "_id": None,
-                    "total_records": {"$sum": 1},
-                    "total_llm_input_audio_tokens": {"$sum": "$llm_input_audio_tokens"},
-                    "total_llm_input_text_tokens": {"$sum": "$llm_input_text_tokens"},
-                    "total_llm_input_cached_audio_tokens": {"$sum": "$llm_input_cached_audio_tokens"},
-                    "total_llm_input_cached_text_tokens": {"$sum": "$llm_input_cached_text_tokens"},
-                    "total_llm_output_audio_tokens": {"$sum": "$llm_output_audio_tokens"},
-                    "total_llm_output_text_tokens": {"$sum": "$llm_output_text_tokens"},
-                    "total_llm_tokens": {"$sum": "$llm_total_tokens"},
-                    "total_tts_characters": {"$sum": "$tts_characters_count"},
-                    "total_tts_audio_duration": {"$sum": "$tts_audio_duration"},
-                    # Cascade mode only; zero for pipeline/realtime rows.
-                    "total_stt_audio_duration": {"$sum": "$stt_audio_duration"},
-                    "total_call_duration_minutes": {"$sum": "$call_duration_minutes"},
-                }
-            },
-        ]
+        pipeline = usage_totals_pipeline(match_filter)
         result = await UsageRecord.aggregate(pipeline).to_list()
     except Exception as e:
         logger.error(f"[admin/analytics/tokens/summary] failed for {current_user.user_email}: {e}")
@@ -294,6 +275,26 @@ async def admin_tokens_summary(
         message="Token usage summary fetched successfully",
         data=summary,
     )
+
+
+@router.get("/analytics/tokens/by-model")
+async def admin_tokens_by_model(
+    start_date: Optional[datetime] = Query(None, description="Start date (ISO 8601)"),
+    end_date: Optional[datetime] = Query(None, description="End date (ISO 8601)"),
+    user_email: Optional[str] = Query(None, description="Filter by user email"),
+    assistant_id: Optional[str] = Query(None, description="Filter by assistant"),
+    current_user: APIKey = Depends(get_super_admin),
+):
+    now = datetime.now(timezone.utc)
+    end_date = end_date or now
+    start_date = start_date or now - timedelta(days=30)
+    match_filter = {"created_at": {"$gte": start_date, "$lte": end_date}}
+    if user_email:
+        match_filter["user_email"] = user_email
+    if assistant_id:
+        match_filter["assistant_id"] = assistant_id
+    results = await UsageRecord.aggregate(usage_by_model_pipeline(match_filter)).to_list()
+    return apiResponse(success=True, message="Token usage by model fetched successfully", data={"models": results})
 
 
 @router.get("/analytics/tokens/by-user")
@@ -317,8 +318,11 @@ async def admin_tokens_by_user(
                 "$group": {
                     "_id": "$user_email",
                     "total_calls": {"$sum": 1},
+                    "total_estimated_cost_usd": {"$sum": {"$ifNull": ["$estimated_cost_usd", 0]}},
                     "total_llm_tokens": {"$sum": "$llm_total_tokens"},
                     "total_llm_input_audio_tokens": {"$sum": "$llm_input_audio_tokens"},
+                    "total_llm_input_cached_tokens": {"$sum": "$llm_input_cached_tokens"},
+                    "total_llm_input_cache_creation_tokens": {"$sum": "$llm_input_cache_creation_tokens"},
                     "total_llm_output_text_tokens": {"$sum": "$llm_output_text_tokens"},
                     "total_tts_characters": {"$sum": "$tts_characters_count"},
                     "total_tts_audio_duration": {"$sum": "$tts_audio_duration"},
@@ -332,8 +336,11 @@ async def admin_tokens_by_user(
                     "_id": 0,
                     "user_email": "$_id",
                     "total_calls": 1,
+                    "total_estimated_cost_usd": 1,
                     "total_llm_tokens": 1,
                     "total_llm_input_audio_tokens": 1,
+                    "total_llm_input_cached_tokens": 1,
+                    "total_llm_input_cache_creation_tokens": 1,
                     "total_llm_output_text_tokens": 1,
                     "total_tts_characters": 1,
                     "total_tts_audio_duration": {"$round": ["$total_tts_audio_duration", 2]},
@@ -382,8 +389,11 @@ async def admin_tokens_by_assistant(
                 "$group": {
                     "_id": "$assistant_id",
                     "total_calls": {"$sum": 1},
+                    "total_estimated_cost_usd": {"$sum": {"$ifNull": ["$estimated_cost_usd", 0]}},
                     "total_llm_tokens": {"$sum": "$llm_total_tokens"},
                     "total_llm_input_audio_tokens": {"$sum": "$llm_input_audio_tokens"},
+                    "total_llm_input_cached_tokens": {"$sum": "$llm_input_cached_tokens"},
+                    "total_llm_input_cache_creation_tokens": {"$sum": "$llm_input_cache_creation_tokens"},
                     "total_llm_output_text_tokens": {"$sum": "$llm_output_text_tokens"},
                     "total_tts_characters": {"$sum": "$tts_characters_count"},
                     "total_tts_audio_duration": {"$sum": "$tts_audio_duration"},
@@ -397,8 +407,11 @@ async def admin_tokens_by_assistant(
                     "_id": 0,
                     "assistant_id": "$_id",
                     "total_calls": 1,
+                    "total_estimated_cost_usd": 1,
                     "total_llm_tokens": 1,
                     "total_llm_input_audio_tokens": 1,
+                    "total_llm_input_cached_tokens": 1,
+                    "total_llm_input_cache_creation_tokens": 1,
                     "total_llm_output_text_tokens": 1,
                     "total_tts_characters": 1,
                     "total_tts_audio_duration": {"$round": ["$total_tts_audio_duration", 2]},

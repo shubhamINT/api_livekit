@@ -274,6 +274,19 @@ available.
 **Cascade does not degrade.** In cascade mode a missing API key is fatal: `create_stt` returns `None`
 and the job ends before the call connects. See [Failure modes](#failure-modes).
 
+**`openai` STT: `use_realtime: false` needs `whisper-1`.** The batch REST path reports no usage at
+all, and every OpenAI STT model except `whisper-1` is billed per token — the call would transcribe
+normally and store zero STT spend. That pairing is a 422 at create/update. `whisper-1` is billed by
+audio duration, which the batch path measures locally, so it is the one model allowed on it. A row
+stored before this gate is forced back to streaming at call time with a warning; it never fails the
+call.
+
+**`sarvam` STT is metered by this runtime, not by the plugin, in both modes.** The plugin reports the
+duration the Sarvam server sent, which is missing on some responses and absent entirely for a turn
+that transcribed to nothing. Pipeline counts the frames its tap pushes; cascade counts them in
+`stt_node` and suppresses the plugin's own metrics. See
+[Usage accounting](usage-accounting.md#sarvam-stt-is-measured-not-reported).
+
 ### Language codes are NOT portable between providers
 
 The same spoken language is written differently per provider, and the standards do not overlap.

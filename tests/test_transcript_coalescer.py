@@ -4,11 +4,13 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest import mock
 
+from livekit import rtc
 from livekit.agents import stt as stt_pkg
 
 from src.core.agents.stt.sarvam_parallel import (
     DRAIN_SILENCE_S,
     FinalCoalescer,
+    SttUsage,
     run_sarvam_parallel_stt,
 )
 
@@ -134,8 +136,14 @@ class _FakeStream:
 
 
 class _FakeRoom:
-    def __init__(self) -> None:
+    def __init__(self, with_caller_track: bool = False) -> None:
         self.remote_participants: dict = {}
+        if with_caller_track:
+            track = SimpleNamespace(kind=rtc.TrackKind.KIND_AUDIO)
+            self.remote_participants["caller"] = SimpleNamespace(
+                identity="caller",
+                track_publications={"pub": SimpleNamespace(track=track)},
+            )
 
     def on(self, *args) -> None:
         pass
@@ -153,6 +161,7 @@ class TestSarvamDrain(unittest.IsolatedAsyncioTestCase):
         emitted: list[str] = []
         coalescer = FinalCoalescer(lambda text, ts: emitted.append(text), window=0.01)
         stop = asyncio.Event()
+        usage = SttUsage()
         # One frame short of the silence burst, so only the drain can satisfy it.
         stream = _FakeStream(frames_needed=int(DRAIN_SILENCE_S / 0.02))
 
@@ -166,6 +175,7 @@ class TestSarvamDrain(unittest.IsolatedAsyncioTestCase):
                     target_identity="caller",
                     coalescer=coalescer,
                     stop_event=stop,
+                    usage=usage,
                     api_key="test",
                 )
             )
@@ -177,6 +187,64 @@ class TestSarvamDrain(unittest.IsolatedAsyncioTestCase):
         # Silence must go in *before* the input closes — reversed, the real plugin discards
         # the reply and the utterance is lost.
         self.assertEqual(stream.frames_at_end_input, stream.frames_needed)
+        # Nobody spoke — this room has no participant to pump. The drain silence went into
+        # the stream but must not be billed as transcribed audio.
+        self.assertEqual(usage.audio_duration, 0.0)
+        self.assertEqual(usage.model, "saaras:v3")
+
+
+class TestSarvamUsageTally(unittest.IsolatedAsyncioTestCase):
+    """Pipeline mode pays Sarvam per second of caller audio, and the tap is the only place
+    that knows how many seconds went in — its plugin STT never reaches the AgentSession's
+    usage collector.
+    """
+
+    async def test_pumped_audio_is_measured_and_shaped_like_an_sdk_entry(self):
+        stop = asyncio.Event()
+        usage = SttUsage()
+        stream = _FakeStream(frames_needed=0)
+        frame = rtc.AudioFrame(
+            b"\x00" * 640, sample_rate=16000, num_channels=1, samples_per_channel=320
+        )
+
+        async def _frames():
+            for _ in range(50):  # 50 x 20 ms = 1.0 s
+                yield SimpleNamespace(frame=frame)
+
+        with (
+            mock.patch(
+                "src.core.agents.stt.sarvam_parallel.sarvam_plugin.STT",
+                return_value=SimpleNamespace(stream=lambda: stream),
+            ),
+            mock.patch(
+                "src.core.agents.stt.sarvam_parallel.rtc.AudioStream",
+                return_value=_frames(),
+            ),
+        ):
+            task = asyncio.create_task(
+                run_sarvam_parallel_stt(
+                    room=_FakeRoom(with_caller_track=True),
+                    target_identity="caller",
+                    coalescer=FinalCoalescer(lambda text, ts: None, window=0.01),
+                    stop_event=stop,
+                    usage=usage,
+                    model="saaras:v4",
+                    api_key="test",
+                )
+            )
+            # Let the pump drain its 50 frames before the stop drain adds silence.
+            for _ in range(10):
+                await asyncio.sleep(0)
+            stop.set()
+            await asyncio.wait_for(task, timeout=2.0)
+
+        self.assertAlmostEqual(usage.audio_duration, 1.0, places=3)
+
+        entry = usage.to_model_usage()
+        self.assertEqual(entry.type, "stt_usage")
+        self.assertEqual(entry.provider, "sarvam")
+        self.assertEqual(entry.model, "saaras:v4")
+        self.assertAlmostEqual(entry.audio_duration, 1.0, places=3)
 
 
 if __name__ == "__main__":

@@ -79,12 +79,14 @@ When you trigger an outbound call, the flow differs based on the provider.
 
 ### Exotel Runtime Gating
 
-- The assistant waits for the bridge `call_answered` event before sending the start instruction.
+- The assistant waits for the bridge `call_answered` event before sending the start instruction. The listener for this event is registered before the assistant's own session starts, so a callee who answers while the assistant is still booting (loading tools, prewarming TTS, resolving the inbound-context webhook) does not have the event go unheard.
 - After readiness is confirmed, start-instruction delivery works in both runtime modes:
   - `pipeline` mode: opening response is generated through the pipeline path.
   - `realtime` mode: opening response is generated through the realtime conversation path.
 - Runtime activity (assistant speech-side behavior and transcript processing) is held until readiness is confirmed.
 - Recording starts through a managed retry flow after readiness for Exotel outbound calls.
+- Before speaking, the assistant runs three steps in order — wait for `call_answered` (bounded, `60s`), confirm recording has started (bounded, `12s`), then a short fixed pause for RTP/egress warmup — and logs one `[EXOTEL] phase timing` line breaking down how long each step took, so a slow call shows exactly where the time went.
+- All three of those steps are raced against the callee hanging up: if the participant disconnects while the assistant is still waiting, the wait is abandoned immediately and the start instruction is skipped, instead of running the full sequence (including a live recording-start call) after the call has already ended.
 
 ### Hold & Resume (Exotel)
 

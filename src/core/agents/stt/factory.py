@@ -1,7 +1,8 @@
 """Resolve the user-transcription source from the assistant's STT model + config."""
 
-from livekit.plugins import cartesia, deepgram, elevenlabs, openai, sarvam
+from livekit.plugins import cartesia, deepgram, elevenlabs, openai
 
+from src.core.agents.stt.cascade_usage import CascadeSttUsage, MeteredSarvamSTT
 from src.core.agents.stt.lang import (
     DEEPGRAM_MULTI,
     validate_language,
@@ -10,6 +11,7 @@ from src.core.agents.stt.lang import (
 )
 from src.core.config import settings
 from src.core.logger import logger
+from src.core.model_support.speech import OPENAI_STT_DURATION_BILLED_MODELS
 
 # Deepgram models that can auto-detect. The nova-2 and flux-general-en families cannot, so
 # an unpinned language there stays on Deepgram's own documented default.
@@ -52,12 +54,16 @@ def resolve_stt(assistant) -> tuple[str, dict]:
     return model, config
 
 
-def create_stt(assistant):
+def create_stt(assistant, usage: CascadeSttUsage | None = None):
     """Build a plugin STT instance for cascade mode. Returns None on error.
 
     Distinct from resolve_stt: cascade puts STT on the AgentSession as a first-class
     stage, so "native" (the conversational LLM transcribing itself) has no meaning
     here — there is no realtime model in the loop to do it.
+
+    `usage` is the call's cascade STT tally. It is stamped, and the returned STT wrapped,
+    only for a provider whose own usage reporting cannot be trusted — Sarvam today. Left
+    None (the default) the behaviour is exactly what it was before that tally existed.
     """
     stt_config = assistant.assistant_stt_config or {}
     model = assistant.assistant_stt_model or "sarvam"
@@ -69,14 +75,22 @@ def create_stt(assistant):
             logger.error(f"No Sarvam API key for cascade assistant {assistant_id}")
             return None
         # The multilingual default: language "unknown" auto-detects, and mode "codemix"
-        # (saaras:v3 only) keeps code-switching intact inside a single utterance.
+        # keeps code-switching intact inside a single utterance.
         # interaction_config.preferred_languages needs no wiring here — auto-detect
         # already covers every language it could list, and pinning one would be strictly
         # worse for a caller who switches mid-call. Set `language` explicitly to pin.
         # The language is validated, not passed through: the Sarvam plugin RAISES on a code
         # its model does not speak, and that exception escapes create_stt and kills the job.
         sarvam_model = stt_config.get("model", "saaras:v3")
-        return sarvam.STT(
+        # Wrapped, not plain: the plugin reports the audio duration the server sent, which is
+        # missing on some responses and absent entirely on an empty transcript. The session
+        # counts the frames instead (DynamicAssistant.stt_node) and MeteredSarvamSTT keeps the
+        # plugin's number out of the collector, so the record carries one entry, not two.
+        if usage is not None:
+            usage.provider = "sarvam"
+            usage.model = sarvam_model
+        return MeteredSarvamSTT(
+            usage=usage if usage is not None else CascadeSttUsage(),
             model=sarvam_model,
             mode=validate_sarvam_mode(
                 sarvam_model, stt_config.get("mode", "codemix"), assistant_id=assistant_id
@@ -245,11 +259,23 @@ def create_stt(assistant):
         # use_realtime streams over the transcription WebSocket (interim results, much
         # lower latency); the plugin default is the batch REST API, which is wrong for a
         # live call, so default the other way.
+        use_realtime = bool(stt_config.get("use_realtime", True))
+        if not use_realtime and openai_model not in OPENAI_STT_DURATION_BILLED_MODELS:
+            # The batch path discards the server's usage, so a token-billed model on it
+            # stores stt_input_tokens = 0 and prices to nothing. The API rejects this pairing
+            # now; a row stored before that gate existed is overridden rather than refused —
+            # a call must not start failing over a metric.
+            logger.warning(
+                f"Assistant {assistant_id} pairs OpenAI STT model {openai_model!r} with "
+                "use_realtime=false, which reports no token usage — forcing use_realtime=true. "
+                "Only 'whisper-1' is billed by duration and may use the batch path."
+            )
+            use_realtime = True
         return openai.STT(
             model=openai_model,
             language=language,
             detect_language=detect_language,
-            use_realtime=stt_config.get("use_realtime", True),
+            use_realtime=use_realtime,
             api_key=api_key,
             **kwargs,
         )

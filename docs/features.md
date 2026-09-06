@@ -32,7 +32,7 @@ table in [Models & Providers](reference/models.md#tts).
 |---|---|---|
 | **Cartesia** | `voice_id` | `language`, `speed` (float `0`–`3`), `volume`, `emotion`, `pronunciation_dict_id` |
 | **Sarvam** | `speaker` | `target_language_code`, `pace`, `speech_sample_rate`, `temperature` |
-| **ElevenLabs** | `voice_id` | `model`, `voice_settings` (`stability`, `similarity_boost`, `style`, `speed` — not on `eleven_v3`, `use_speaker_boost`); non-streaming (HTTP chunked) |
+| **ElevenLabs** | `voice_id` | `model`, `voice_settings` (`stability`, `similarity_boost`, `style`, `speed` — not on the `eleven_v3` models, `use_speaker_boost`); non-streaming (HTTP chunked) |
 | **Mistral** | `voice_id` | none; non-streaming |
 
 - Per-assistant TTS config; API key override per assistant

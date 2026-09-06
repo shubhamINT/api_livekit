@@ -51,6 +51,39 @@
             "context": 262144,
             "output": 16384
           }
+        },
+
+        "openai.gpt-5.6-sol": {
+          "name": "OpenAI GPT-5.6 Sol",
+          "tool_call": true,
+          "reasoning": true,
+          "attachment": true,
+          "limit": {
+            "context": 400000,
+            "output": 128000
+          }
+        },
+
+        "openai.gpt-5.6-terra": {
+          "name": "OpenAI GPT-5.6 Terra",
+          "tool_call": true,
+          "reasoning": true,
+          "attachment": true,
+          "limit": {
+            "context": 400000,
+            "output": 128000
+          }
+        },
+
+        "openai.gpt-5.6-luna": {
+          "name": "OpenAI GPT-5.6 Luna",
+          "tool_call": true,
+          "reasoning": true,
+          "attachment": true,
+          "limit": {
+            "context": 400000,
+            "output": 128000
+          }
         }
       }
     }

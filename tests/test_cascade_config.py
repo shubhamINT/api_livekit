@@ -6,27 +6,63 @@ tests cover the parts that decide what actually gets built, without touching the
 
 import sys
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
 from pydantic import ValidationError
 
+from livekit.agents import __version__ as livekit_agents_version
 from livekit.agents.metrics.usage import (
     AgentSessionUsage,
+    EOTModelUsage,
     LLMModelUsage,
     STTModelUsage,
     TTSModelUsage,
 )
+from livekit.plugins import sarvam as sarvam_plugin
+from livekit.plugins.sarvam.stt import MODEL_CONFIGS as SARVAM_MODEL_CONFIGS
 
 from src.api.models.api_schemas import CreateAssistant, UpdateAssistant
 from src.core.agents.llm import create_llm
-from src.core.agents.stt import create_stt
-from src.core.agents.usage import summarize_usage
+from src.core.agents.stt import (
+    CascadeSttUsage,
+    MeteredSarvamSTT,
+    NativeSttModelUsage,
+    create_stt,
+)
+from src.core.agents import usage as usage_module
+from src.core.agents.usage import summarize_usage, upsert_usage_record
 from src.core.db.db_schemas import UsageRecord
 
 sys.path.append(str(Path(__file__).resolve().parents[1] / "scripts"))
 from migrate_llm_knobs import stale_knobs  # noqa: E402
+
+
+def narrower_sarvam_model(name, *, languages=None, supports_mode=True):
+    """Register a Sarvam STT model with a narrower surface than the shipped roster.
+
+    The per-model language and mode gates exist because the plugin raises rather than
+    warning, and that exception kills the job. Today every model the plugin ships accepts
+    the same languages and modes, so there is nothing real to gate against; this registers
+    a model that does not, in the plugin's own table, which is the one `stt/lang.py` reads.
+    """
+    base = SARVAM_MODEL_CONFIGS["saaras:v3"]
+    return mock.patch.dict(
+        SARVAM_MODEL_CONFIGS,
+        {
+            name: replace(
+                base,
+                supports_mode=supports_mode,
+                # "unknown" is Sarvam's auto-detect, and the fallback every dropped code
+                # lands on, so a model that rejected it could not be built at all.
+                allowed_languages=(
+                    {*languages, "unknown"} if languages else base.allowed_languages
+                ),
+            )
+        },
+    )
 
 
 def make_assistant(preferred_languages=None, **overrides):
@@ -62,15 +98,52 @@ class TestCreateSTT(unittest.TestCase):
                 assistant_stt_model="sarvam",
                 assistant_stt_config={
                     "api_key": "k",
-                    "model": "saarika:v2.5",
+                    "model": "saaras:v4",
                     "language": "hi-IN",
                     "mode": "transcribe",
                 },
             )
         )
-        self.assertEqual(stt._opts.model, "saarika:v2.5")
+        self.assertEqual(stt._opts.model, "saaras:v4")
         self.assertEqual(stt._opts.language, "hi-IN")
         self.assertEqual(stt._opts.mode, "transcribe")
+
+    def test_sarvam_is_wrapped_so_the_session_measures_it(self):
+        """Sarvam's own RECOGNITION_USAGE carries a server field that is missing on some
+        responses, so the wrapper replaces it. The wrapper must still be a sarvam.STT with
+        the same options — it changes reporting, not transcription."""
+        tally = CascadeSttUsage()
+        stt = create_stt(
+            make_assistant(
+                assistant_stt_model="sarvam",
+                assistant_stt_config={"api_key": "k", "model": "saaras:v4"},
+            ),
+            usage=tally,
+        )
+        self.assertIsInstance(stt, MeteredSarvamSTT)
+        self.assertIsInstance(stt, sarvam_plugin.STT)
+        self.assertEqual(stt._opts.model, "saaras:v4")
+        self.assertEqual((tally.provider, tally.model), ("sarvam", "saaras:v4"))
+
+    def test_other_providers_leave_the_tally_unclaimed(self):
+        """Cartesia, deepgram and elevenlabs count frames themselves and openai reports
+        billing tokens, so the session's tally must not add a second entry for them."""
+        for model, config in (
+            ("cartesia", {"api_key": "k"}),
+            ("deepgram", {"api_key": "k"}),
+            ("elevenlabs", {"api_key": "k"}),
+            ("openai", {"api_key": "k"}),
+        ):
+            with self.subTest(model=model):
+                tally = CascadeSttUsage()
+                create_stt(
+                    make_assistant(
+                        assistant_stt_model=model, assistant_stt_config=config
+                    ),
+                    usage=tally,
+                )
+                self.assertEqual(tally.provider, "")
+                self.assertIsNone(tally.to_model_usage())
 
     def test_cartesia_model_is_pinned_not_defaulted(self):
         """The plugin default flipped to the English-only ink-2 in 1.5.15, so the
@@ -132,29 +205,34 @@ class TestCreateSTT(unittest.TestCase):
         self.assertEqual(stt._opts.language, "unknown")
 
     def test_sarvam_language_sets_are_per_model(self):
-        """saarika:v2.5 speaks a subset of saaras:v3 — a code valid on one raises on the
-        other, so the check has to know which model it is building for."""
-        cfg = {"api_key": "k", "model": "saarika:v2.5", "language": "sat-IN"}
-        stt = create_stt(make_assistant(assistant_stt_model="sarvam", assistant_stt_config=cfg))
-        self.assertEqual(stt._opts.language, "unknown")
+        """A code valid on one Sarvam model raises on another, so the check has to know
+        which model it is building for. Every model on the current roster takes the same
+        codes, so the narrow model is a stand-in — the roster diverged this way before
+        (the sunset saarika:v2.5 spoke 11 codes to saaras:v3's 23) and can again."""
+        with narrower_sarvam_model("saaras:vNarrow", languages={"en-IN", "hi-IN"}):
+            cfg = {"api_key": "k", "model": "saaras:vNarrow", "language": "sat-IN"}
+            stt = create_stt(
+                make_assistant(assistant_stt_model="sarvam", assistant_stt_config=cfg)
+            )
+            self.assertEqual(stt._opts.language, "unknown")
         cfg = {"api_key": "k", "model": "saaras:v3", "language": "sat-IN"}
         stt = create_stt(make_assistant(assistant_stt_model="sarvam", assistant_stt_config=cfg))
         self.assertEqual(stt._opts.language, "sat-IN")
 
     def test_sarvam_mode_is_dropped_on_models_that_reject_it(self):
         """`mode` is model-gated exactly like `language`, and the plugin raises the same
-        way. Only saaras:v3 supports it, so this repo's blanket "codemix" default would
-        kill every job on a v2.5 model."""
-        for model in ("saarika:v2.5", "saaras:v2.5"):
-            with self.subTest(model=model):
-                stt = create_stt(
-                    make_assistant(
-                        assistant_stt_model="sarvam",
-                        assistant_stt_config={"api_key": "k", "model": model},
-                    )
+        way, so this repo's blanket "codemix" default would kill every job on a model that
+        does not take it. saaras:v3 and saaras:v4 both do; the v2.5 pair that did not is
+        sunset, hence the stand-in."""
+        with narrower_sarvam_model("saaras:vNoMode", supports_mode=False):
+            stt = create_stt(
+                make_assistant(
+                    assistant_stt_model="sarvam",
+                    assistant_stt_config={"api_key": "k", "model": "saaras:vNoMode"},
                 )
-                self.assertIsNotNone(stt)
-                self.assertNotEqual(stt._opts.mode, "codemix")
+            )
+        self.assertIsNotNone(stt)
+        self.assertNotEqual(stt._opts.mode, "codemix")
 
     def test_sarvam_blank_language_means_auto_detect(self):
         """An empty string is reachable from the API — the schema sets no min_length — and
@@ -409,16 +487,31 @@ class TestOpenAISTT(unittest.TestCase):
         self.assertTrue(stt.capabilities.streaming)
         self.assertTrue(stt.capabilities.interim_results)
 
-    def test_use_realtime_false_falls_back_to_batch(self):
-        self.assertFalse(self._stt(use_realtime=False).capabilities.streaming)
+    def test_use_realtime_false_is_overridden_for_a_token_billed_model(self):
+        """A row stored before the API gate existed must not take the batch path.
+
+        That path reports no token usage at all, and every OpenAI STT model except whisper-1
+        is billed per token — the call would transcribe fine and record zero STT spend. The
+        runtime forces streaming rather than refusing: a stored config cannot start failing
+        calls over a metric.
+        """
+        with self.assertLogs("app", level="WARNING") as logs:
+            stt = self._stt(model="gpt-4o-mini-transcribe", use_realtime=False)
+        self.assertTrue(stt.capabilities.streaming)
+        self.assertIn("use_realtime=false", "\n".join(logs.output))
+
+    def test_use_realtime_false_is_honoured_for_whisper(self):
+        """whisper-1 is billed by audio duration, which the batch path measures locally."""
+        self.assertFalse(self._stt(model="whisper-1", use_realtime=False).capabilities.streaming)
 
     def test_unpinned_autodetects(self):
         """Contract change: unpinned used to mean preferred_languages[0], then a hardcoded
         'en' — a Hindi caller was transcribed as English. Detect instead. The plugin
-        expresses auto-detect as an empty language code."""
+        expresses auto-detect as an empty language list (it was a single empty string
+        before 1.7.0, which added code-switched transcription)."""
         stt = self._stt()
         self.assertTrue(stt._opts.detect_language)
-        self.assertEqual(stt._opts.language, "")
+        self.assertEqual(stt._opts.languages, [])
 
     def test_preferred_languages_do_not_pin(self):
         stt = self._stt(preferred_languages=["hi-IN"])
@@ -426,7 +519,7 @@ class TestOpenAISTT(unittest.TestCase):
 
     def test_explicit_language_pins(self):
         stt = self._stt(preferred_languages=["hi-IN"], language="ta")
-        self.assertEqual(stt._opts.language, "ta")
+        self.assertEqual(stt._opts.languages, ["ta"])
         self.assertFalse(stt._opts.detect_language)
 
     def test_rejects_bcp47_language(self):
@@ -438,7 +531,7 @@ class TestOpenAISTT(unittest.TestCase):
     def test_detect_language_blanks_the_pinned_language(self):
         stt = self._stt(language="hi", detect_language=True)
         self.assertTrue(stt._opts.detect_language)
-        self.assertEqual(stt._opts.language, "")
+        self.assertEqual(stt._opts.languages, [])
 
     def test_optional_knobs_stay_unset_by_default(self):
         stt = self._stt()
@@ -755,6 +848,26 @@ class TestCascadeSchemaRules(unittest.TestCase):
         )
         self.assertEqual(request.assistant_stt_config.type, "cartesia")
         self.assertEqual(request.assistant_stt_config.language, "hi")
+
+    def test_cascade_rejects_batch_openai_stt_on_a_token_billed_model(self):
+        """The batch transcription API reports no token usage, and every OpenAI STT model
+        but whisper-1 is billed per token — the call would store zero STT spend."""
+        with self.assertRaises(ValidationError) as caught:
+            CreateAssistant(
+                **self.BASE,
+                assistant_stt_model="openai",
+                assistant_stt_config={"model": "gpt-4o-mini-transcribe", "use_realtime": False},
+            )
+        self.assertIn("whisper-1", str(caught.exception))
+
+    def test_cascade_accepts_batch_openai_stt_on_whisper(self):
+        """whisper-1 is billed by audio duration, which the batch path measures locally."""
+        request = CreateAssistant(
+            **self.BASE,
+            assistant_stt_model="openai",
+            assistant_stt_config={"model": "whisper-1", "use_realtime": False},
+        )
+        self.assertFalse(request.assistant_stt_config.use_realtime)
 
     def test_cascade_accepts_deepgram_stt(self):
         request = CreateAssistant(
@@ -1549,6 +1662,24 @@ class TestUnknownConfigKeys(unittest.TestCase):
 
 
 class TestSummarizeUsage(unittest.TestCase):
+    def test_normalizes_provider_names(self):
+        from src.core.agents.usage import normalize_provider
+
+        cases = {
+            "Cartesia": "cartesia",
+            "Deepgram": "deepgram",
+            "ElevenLabs": "elevenlabs",
+            "Sarvam": "sarvam",
+            "sarvam": "sarvam",
+            "openai": "openai",
+            "api.openai.com": "openai",
+            "edge.openai.com": "openai",
+            "Gemini": "gemini",
+            "Vertex AI": "vertex ai",
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw):
+                self.assertEqual(normalize_provider(raw), expected)
     def _usage(self):
         return AgentSessionUsage(
             model_usage=[
@@ -1557,6 +1688,10 @@ class TestSummarizeUsage(unittest.TestCase):
                     model="gpt-4.1-mini",
                     input_tokens=100,
                     input_text_tokens=90,
+                    # Subsets of the two counts above, not extra tokens on top of them.
+                    input_cached_tokens=60,
+                    input_cached_text_tokens=60,
+                    input_cache_creation_tokens=20,
                     output_tokens=40,
                     output_text_tokens=40,
                 ),
@@ -1576,8 +1711,39 @@ class TestSummarizeUsage(unittest.TestCase):
                 STTModelUsage(
                     provider="sarvam", model="saaras:v3", audio_duration=31.25
                 ),
+                # Local turn detector: reported by the SDK, free, and deliberately kept
+                # out of the stored model_usage list.
+                EOTModelUsage(
+                    provider="livekit", model="turn-detector-v1-mini", total_requests=7
+                ),
             ]
         )
+
+    def test_cascade_sarvam_contributes_exactly_one_stt_entry(self):
+        """MeteredSarvamSTT suppresses the plugin's own metrics, so the session's collector
+        holds no sarvam entry and the tally supplies the only one."""
+        session = SimpleNamespace(usage=AgentSessionUsage(model_usage=[]))
+        tally = CascadeSttUsage(provider="sarvam", model="saaras:v3", audio_duration=42.0)
+        metered = summarize_usage(session, extra_usage=[tally.to_model_usage()])
+        stt_entries = [e for e in metered["model_usage"] if e["type"] == "stt_usage"]
+        self.assertEqual(len(stt_entries), 1)
+        self.assertEqual(stt_entries[0]["provider"], "sarvam")
+        self.assertEqual(metered["stt_audio_duration"], 42.0)
+
+    def test_a_surviving_plugin_entry_would_double_the_duration(self):
+        """Why the plugin's metrics are dropped rather than zeroed: the collector creates an
+        entry from the first metric it sees, and summarize_usage sums every stt entry. This
+        is the regression the suppression exists to prevent."""
+        session = SimpleNamespace(
+            usage=AgentSessionUsage(
+                model_usage=[
+                    STTModelUsage(provider="sarvam", model="saaras:v3", audio_duration=42.0)
+                ]
+            )
+        )
+        tally = CascadeSttUsage(provider="sarvam", model="saaras:v3", audio_duration=42.0)
+        metered = summarize_usage(session, extra_usage=[tally.to_model_usage()])
+        self.assertEqual(metered["stt_audio_duration"], 84.0)
 
     def test_sums_across_entries_per_component(self):
         metered = summarize_usage(SimpleNamespace(usage=self._usage()))
@@ -1610,6 +1776,186 @@ class TestSummarizeUsage(unittest.TestCase):
         )
         self.assertIsNone(metered["llm_model"])
         self.assertEqual(metered["tts_characters_count"], 0)
+
+    def test_cache_tokens_are_recorded_and_stay_a_subset(self):
+        """The cache discount is the single largest item on a cascade bill, and the
+        cached counts are subsets of the input counts — pricing that adds them to the
+        input counts instead of splitting them out double-counts every cached turn."""
+        metered = summarize_usage(SimpleNamespace(usage=self._usage()))
+        self.assertEqual(metered["llm_input_cached_tokens"], 60)
+        self.assertEqual(metered["llm_input_cached_text_tokens"], 60)
+        self.assertEqual(metered["llm_input_cache_creation_tokens"], 20)
+        self.assertLessEqual(
+            metered["llm_input_cached_text_tokens"], metered["llm_input_text_tokens"]
+        )
+        self.assertLessEqual(
+            metered["llm_input_cached_tokens"], metered["llm_input_tokens"]
+        )
+        self.assertLessEqual(metered["llm_input_tokens"], metered["llm_total_tokens"])
+
+    def test_token_billed_stt_and_tts_are_recorded(self):
+        """OpenAI bills STT and TTS in tokens, not seconds or characters. Those
+        entries carry zero audio_duration and zero characters_count, so before these
+        fields existed an openai STT stage recorded nothing at all."""
+        metered = summarize_usage(
+            SimpleNamespace(
+                usage=AgentSessionUsage(
+                    model_usage=[
+                        STTModelUsage(
+                            provider="openai",
+                            model="gpt-4o-mini-transcribe",
+                            input_tokens=1200,
+                            output_tokens=80,
+                        ),
+                        TTSModelUsage(
+                            provider="openai",
+                            model="gpt-4o-mini-tts",
+                            input_tokens=300,
+                            output_tokens=4000,
+                        ),
+                    ]
+                )
+            )
+        )
+        self.assertEqual(metered["stt_input_tokens"], 1200)
+        self.assertEqual(metered["stt_output_tokens"], 80)
+        self.assertEqual(metered["tts_input_tokens"], 300)
+        self.assertEqual(metered["tts_output_tokens"], 4000)
+
+    def test_raw_model_usage_keeps_per_model_attribution(self):
+        """The flat columns sum across a mid-call model swap; this list is what lets
+        pricing charge each model at its own rate."""
+        metered = summarize_usage(SimpleNamespace(usage=self._usage()))
+        self.assertEqual(
+            [(e["type"], e["model"]) for e in metered["model_usage"]],
+            [
+                ("llm_usage", "gpt-4.1-mini"),
+                ("llm_usage", "gpt-4o-mini"),
+                ("tts_usage", "sonic-3"),
+                ("stt_usage", "saaras:v3"),
+            ],
+        )
+        # Full dump, zeros included: a missing key must never be ambiguous.
+        self.assertEqual(metered["model_usage"][0]["input_cached_tokens"], 60)
+
+    def test_records_the_schema_and_sdk_versions(self):
+        metered = summarize_usage(SimpleNamespace(usage=self._usage()))
+        self.assertEqual(metered["usage_schema_version"], 3)
+        self.assertEqual(metered["sdk_version"], livekit_agents_version)
+
+    def test_extra_usage_is_folded_like_a_session_entry(self):
+        """Pipeline mode transcribes on a Sarvam tap that the session's collector never
+        sees. Its seconds come in through extra_usage and must reach both the flat
+        columns and the raw list, or a pipeline call prices as if transcription were free.
+        """
+        metered = summarize_usage(
+            SimpleNamespace(usage=AgentSessionUsage(model_usage=[])),
+            extra_usage=[
+                STTModelUsage(provider="sarvam", model="saaras:v3", audio_duration=42.0)
+            ],
+        )
+        self.assertEqual(metered["stt_audio_duration"], 42.0)
+        self.assertEqual(metered["stt_model"], "saaras:v3")
+        self.assertEqual(
+            [(e["type"], e["model"]) for e in metered["model_usage"]],
+            [("stt_usage", "saaras:v3")],
+        )
+
+    def test_native_transcription_split_reaches_its_own_columns(self):
+        """OpenAI bills transcription audio and text input at different rates. The split
+        only exists on NativeSttModelUsage, so a plain SDK entry must still read zero."""
+        metered = summarize_usage(
+            SimpleNamespace(usage=AgentSessionUsage(model_usage=[])),
+            extra_usage=[
+                NativeSttModelUsage(
+                    provider="openai",
+                    model="gpt-4o-mini-transcribe",
+                    input_tokens=100,
+                    input_audio_tokens=90,
+                    input_text_tokens=10,
+                    output_tokens=12,
+                ),
+                STTModelUsage(provider="sarvam", model="saaras:v3", audio_duration=42.0),
+            ],
+        )
+        self.assertEqual(metered["stt_input_tokens"], 100)
+        self.assertEqual(metered["stt_input_audio_tokens"], 90)
+        self.assertEqual(metered["stt_input_text_tokens"], 10)
+        self.assertEqual(metered["stt_audio_duration"], 42.0)
+        self.assertEqual(metered["stt_model"], "gpt-4o-mini-transcribe, saaras:v3")
+        # The split has to survive into the raw list, which is what pricing reads.
+        self.assertEqual(metered["model_usage"][0]["input_audio_tokens"], 90)
+
+    def test_extra_usage_survives_an_unreadable_session(self):
+        """The tap measured its own audio. An SDK failure on an unrelated component must
+        not take that number down with it."""
+        metered = summarize_usage(
+            SimpleNamespace(),  # no .usage at all
+            extra_usage=[
+                STTModelUsage(provider="sarvam", model="saaras:v3", audio_duration=42.0)
+            ],
+        )
+        self.assertEqual(metered["stt_audio_duration"], 42.0)
+        self.assertEqual(metered["llm_total_tokens"], 0)
+
+
+class TestUpsertUsageRecord(unittest.IsolatedAsyncioTestCase):
+    """The record is written repeatedly — every USAGE_FLUSH_INTERVAL_S while the call runs,
+    then once at teardown — so the write has to be idempotent on room_name."""
+
+    def _patched_upsert(self):
+        """Patch UsageRecord.find_one so the call reaches a mock instead of Mongo."""
+        upsert = mock.AsyncMock()
+        find_one = mock.Mock(return_value=SimpleNamespace(upsert=upsert))
+        return mock.patch.object(usage_module.UsageRecord, "find_one", find_one), upsert
+
+    def _record(self, **overrides):
+        fields = {
+            "room_name": "room-1",
+            "assistant_id": "a1",
+            "user_email": "someone@example.com",
+            "llm_total_tokens": 900,
+            "usage_finalized": False,
+        }
+        fields.update(overrides)
+        # Beanie is not initialized in tests, so the document cannot be constructed normally.
+        return UsageRecord.model_construct(**fields)
+
+    async def test_update_leaves_created_at_alone(self):
+        """created_at marks when the call's record first appeared. Carrying it in the
+        update would move it forward on every snapshot."""
+        patch, upsert = self._patched_upsert()
+        with patch:
+            await upsert_usage_record(self._record())
+        written = upsert.await_args.args[0]["$set"]
+        self.assertNotIn("created_at", written)
+        self.assertNotIn("id", written)
+
+    async def test_update_carries_the_counts_and_the_finalized_flag(self):
+        patch, upsert = self._patched_upsert()
+        with patch:
+            await upsert_usage_record(self._record(llm_total_tokens=1234, usage_finalized=True))
+        fields = upsert.await_args.args[0]["$set"]
+        self.assertEqual(fields["llm_total_tokens"], 1234)
+        self.assertTrue(fields["usage_finalized"])
+
+    async def test_missing_row_is_created_from_the_record_itself(self):
+        """A worker that dies mid-call must leave its first snapshot behind, so the very
+        first write has to create the row rather than fail on a missing one."""
+        patch, upsert = self._patched_upsert()
+        record = self._record()
+        with patch:
+            await upsert_usage_record(record)
+        self.assertIs(upsert.await_args.kwargs["on_insert"], record)
+
+    async def test_writing_the_same_room_twice_is_not_an_error(self):
+        """room_name is uniquely indexed. The previous insert() raised DuplicateKeyError on
+        the second teardown route; an upsert just overwrites."""
+        patch, upsert = self._patched_upsert()
+        with patch:
+            await upsert_usage_record(self._record())
+            await upsert_usage_record(self._record(usage_finalized=True))
+        self.assertEqual(upsert.await_count, 2)
 
 
 class TestStaleKnobBackfill(unittest.TestCase):

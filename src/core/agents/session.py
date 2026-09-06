@@ -4,8 +4,6 @@ from livekit import rtc
 from livekit.agents import (
     AgentSession,
     JobContext,
-    WorkerOptions,
-    cli,
     inference,
     room_io,
     BackgroundAudioPlayer,
@@ -27,6 +25,7 @@ from openai.types.realtime.realtime_truncation_retention_ratio import (
 import os
 import asyncio
 import json
+import time
 from datetime import datetime, timezone
 
 from src.core.config import settings
@@ -45,14 +44,20 @@ from src.core.model_support.capabilities import (
 )
 from src.core.agents.tts import create_tts, maintain_sarvam_connection
 from src.core.agents.stt import (
+    NATIVE_TRANSCRIBE_MODEL,
+    CascadeSttUsage,
     FinalCoalescer,
+    MeteredRealtimeModel,
+    NativeSttUsage,
+    SttUsage,
     create_stt,
     build_native_stt_prompt,
     noise_reduction_for,
     resolve_stt,
     run_sarvam_parallel_stt,
 )
-from src.core.agents.usage import summarize_usage
+from src.core.agents.usage import summarize_usage, upsert_usage_record
+from src.core.pricing import price_model_usage
 from src.core.agents.utils import render_prompt
 from src.core.agents.voice_features import SilenceWatchdogController, FillerController, HoldController, InputGuardController
 from src.core.agents.tool_builder import build_tools_from_db
@@ -75,12 +80,17 @@ DEFAULT_MAX_CALL_DURATION_MINUTES = 30.0
 # join, the usage record and the end-of-call webhook — is delayed by this much.
 END_OF_CALL_GRACE_S = 4.0
 
+# How often the usage record is rewritten while the call is still running. The teardown
+# write is the authoritative one; these snapshots exist so a worker that dies mid-call
+# leaves the tokens it already spent behind instead of nothing.
+USAGE_FLUSH_INTERVAL_S = 15.0
+
 # Fixed pause after call_answered before the greeting is sent, to let the RTP mixer and
 # egress recording finish settling. Was 2.0s (unconditional, on every Exotel call — a
 # real chunk of the reported 5-6s first-speech latency). Lowered as a starting point;
 # NOT verified against a live call — listen to the first ~2s of a real Exotel greeting
 # after this change and put it back up if the opening word sounds clipped or garbled.
-EXOTEL_RTP_WARMUP_SLEEP_SEC = 1.0
+EXOTEL_RTP_WARMUP_SLEEP_SEC = 0.25
 
 
 def should_record(role: str | None, *, on_hold: bool, gate_active: bool) -> bool:
@@ -95,6 +105,59 @@ def should_record(role: str | None, *, on_hold: bool, gate_active: bool) -> bool
     if role == "user":
         return True
     return gate_active and not on_hold
+
+
+async def _wait_to_speak_or_hangup(
+    *,
+    gate: CallReadinessGate,
+    recorder: RecordingManager,
+    hangup_event: asyncio.Event,
+    warmup_sec: float,
+    gate_timeout: float = 60.0,
+    recorder_timeout: float = 12.0,
+) -> bool:
+    """Wait for call_answered + recording + RTP warmup, raced against a hang-up.
+
+    Returns True if the greeting should be sent, False if the wait timed out or the
+    caller hung up first. Logs a per-phase timing breakdown so a slow call shows exactly
+    which phase ate the time, instead of looking like an unexplained one-off.
+    """
+    t_start = time.monotonic()
+
+    async def _wait_ready() -> bool:
+        if not await gate.wait_until_ready(timeout=gate_timeout):
+            logger.warning("[EXOTEL] Timed out waiting for call_answered — skipping start instruction")
+            return False
+        t_answered = time.monotonic()
+
+        recording_ready = await recorder.ensure_started(timeout=recorder_timeout)
+        t_recorder = time.monotonic()
+        if not recording_ready:
+            logger.warning("[EXOTEL] Recording did not become ready before first reply; proceeding")
+
+        await asyncio.sleep(warmup_sec)
+        t_warmup = time.monotonic()
+
+        logger.info(
+            "[EXOTEL] phase timing | gate_wait="
+            f"{t_answered - t_start:.2f}s recorder_wait={t_recorder - t_answered:.2f}s "
+            f"warmup={t_warmup - t_recorder:.2f}s total={t_warmup - t_start:.2f}s"
+        )
+        return True
+
+    wait_task = asyncio.ensure_future(_wait_ready())
+    hangup_task = asyncio.ensure_future(hangup_event.wait())
+    done, pending = await asyncio.wait({wait_task, hangup_task}, return_when=asyncio.FIRST_COMPLETED)
+    for t in pending:
+        t.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+    if wait_task in done:
+        return wait_task.result()
+
+    logger.info("[EXOTEL] Caller hung up while waiting to speak — skipping start instruction")
+    return False
 
 
 # Helper to build background audio player based on interaction config
@@ -354,10 +417,34 @@ async def entrypoint(ctx: JobContext):
         except Exception as e:
             logger.error(f"Failed to load tools: {e}", exc_info=True)
 
-    # Persist usage metrics at call end
-    async def _persist_usage():
+    # Persist usage metrics — every USAGE_FLUSH_INTERVAL_S while the call runs, and once
+    # more at teardown, which is the write that counts.
+    async def _persist_usage(final: bool = True):
+        nonlocal _last_usage_written
         try:
-            metered = summarize_usage(session)
+            # Three transcription paths the AgentSession's collector does not get right, each
+            # handing in an entry shaped like the SDK's own. Two run outside the session
+            # entirely — the Sarvam tap, and the ASR the OpenAI Realtime API bills separately
+            # from the realtime model. The third, cascade Sarvam, runs *inside* it, and its
+            # plugin entry is deliberately suppressed because the duration it reports comes
+            # from a server field that is often missing (see stt/cascade_usage.py).
+            _native_entry = _native_usage.to_model_usage()
+            _cascade_stt_entry = _cascade_stt_usage.to_model_usage()
+            _extra = [_sarvam_usage.to_model_usage()] if _use_sarvam_stt else []
+            if _native_entry is not None:
+                _extra.append(_native_entry)
+            if _cascade_stt_entry is not None:
+                _extra.append(_cascade_stt_entry)
+            metered = summarize_usage(session, extra_usage=_extra)
+            pricing = price_model_usage(
+                metered["model_usage"],
+                pricing_context={"openai_service_tier": llm_config.get("service_tier")},
+            )
+            metered["model_usage"] = pricing.model_usage
+            metered["estimated_cost_usd"] = pricing.estimated_cost_usd
+            metered["pricing_schema_version"] = pricing.pricing_schema_version
+            metered["pricing_complete"] = pricing.pricing_complete
+            metered["unpriced_model_usage"] = pricing.unpriced_model_usage
             telephony_provider = job_metadata.get("call_service") or job_metadata.get("service")
             if job_metadata.get("call_type") == "web":
                 telephony_provider = None
@@ -373,6 +460,16 @@ async def entrypoint(ctx: JobContext):
             # LLM vendor, recorded for all modes. Resolved once at model build (see below).
             llm_realtime_provider = realtime_provider
 
+            # Three ways a call can pay for transcription: the cascade STT stage, the
+            # pipeline Sarvam tap, or the OpenAI Realtime API's own ASR. Only Gemini realtime
+            # has no separate STT bill — its input audio is inside the LLM tokens.
+            if is_cascade:
+                stt_billed_to = assistant.assistant_stt_model or "sarvam"
+            elif _use_sarvam_stt:
+                stt_billed_to = "sarvam"
+            else:
+                stt_billed_to = "openai" if _native_entry is not None else None
+
             usage = UsageRecord(
                 room_name=room_name,
                 assistant_id=assistant_id,
@@ -380,31 +477,63 @@ async def entrypoint(ctx: JobContext):
                 mode=assistant.assistant_mode,
                 llm_realtime_provider=llm_realtime_provider,
                 tts_provider=assistant.assistant_tts_model if not is_realtime else None,
-                # Only cascade has a standalone STT stage worth attributing cost to; the
-                # other modes transcribe inside the LLM, so the spend is in its tokens.
-                stt_provider=(assistant.assistant_stt_model or "sarvam") if is_cascade else None,
+                stt_provider=stt_billed_to,
                 call_service=telephony_provider,
                 call_duration_minutes=call_duration,
+                usage_finalized=final,
                 **metered,
             )
-            await usage.insert()
+            # call_duration_minutes grows on the wall clock, so it is left out of the
+            # comparison: including it would make every snapshot look different and write a
+            # row every 15s on a call that has gone quiet. The teardown write recomputes it,
+            # and CallRecord holds the authoritative duration either way.
+            snapshot = usage.model_dump(exclude={"id", "created_at", "call_duration_minutes"})
+            if not final and snapshot == _last_usage_written:
+                return
+            await upsert_usage_record(usage)
+            _last_usage_written = snapshot
+            if not final:
+                logger.debug(
+                    f"Usage snapshot | room={room_name} | "
+                    f"llm_tokens={usage.llm_total_tokens}"
+                )
+                return
             logger.info(
                 f"Usage persisted | room={room_name} | mode={usage.mode} | "
                 f"llm_tokens={usage.llm_total_tokens} | "
+                f"llm_cached={usage.llm_input_cached_tokens} | "
                 f"tts_chars={usage.tts_characters_count} | "
-                f"stt_audio={usage.stt_audio_duration:.1f}s"
+                f"stt={usage.stt_provider or 'none'} | "
+                f"stt_audio={usage.stt_audio_duration:.1f}s | "
+                f"stt_tokens={usage.stt_input_tokens + usage.stt_output_tokens} "
+                f"(audio={usage.stt_input_audio_tokens}) | "
+                f"estimated_cost_usd={usage.estimated_cost_usd}"
             )
         except Exception as e:
             logger.error(f"Failed to persist usage record: {e}", exc_info=True)
 
     _sarvam_stop = asyncio.Event()
     _sarvam_task: asyncio.Task | None = None
+    # Filled by the tap as it pumps audio; read by _persist_usage at teardown.
+    _sarvam_usage = SttUsage()
+    # Same, for the transcription the OpenAI Realtime API runs and bills separately. Stays
+    # empty in cascade, in Gemini realtime, and whenever the Sarvam tap replaces it.
+    _native_usage = NativeSttUsage(model=NATIVE_TRANSCRIBE_MODEL)
+    # Same again, for the cascade STT stage. Filled by DynamicAssistant.stt_node, claimed by
+    # create_stt only for a provider whose own reporting cannot be trusted.
+    _cascade_stt_usage = CascadeSttUsage()
+    # Last snapshot _persist_usage actually wrote, so an idle call stops rewriting the same
+    # numbers every USAGE_FLUSH_INTERVAL_S.
+    _last_usage_written: dict | None = None
     # Assigned below, once _enqueue_transcript exists. Declared here because teardown reads it.
     _user_coalescer: FinalCoalescer | None = None
 
     # Watchdog/tools stamp a reason before teardown persists it.
     _end_reason: str = "natural"
     _max_duration_task: asyncio.Task | None = None
+    # Started once the session is running; teardown cancels it so the snapshot loop can
+    # never overlap the final write.
+    _usage_task: asyncio.Task | None = None
     _teardown_started: bool = False
     # Declared here, not after wait_for_participant: the conversation_item_added handler
     # closes over it and can fire before a participant has joined.
@@ -485,6 +614,12 @@ async def entrypoint(ctx: JobContext):
             logger.warning("Timed out waiting for pending transcripts")
         transcript_worker.cancel()
         await asyncio.gather(transcript_worker, return_exceptions=True)
+        # Stopped before the final write, not after: a snapshot still in flight would race
+        # the authoritative one and could land second, leaving usage_finalized False on a
+        # call that finished cleanly.
+        if _usage_task is not None:
+            _usage_task.cancel()
+            await asyncio.gather(_usage_task, return_exceptions=True)
         await _persist_usage()
         try:
             rec = await CallRecord.find_one(CallRecord.room_name == ctx.room.name)
@@ -579,6 +714,7 @@ async def entrypoint(ctx: JobContext):
         instructions=assistant.assistant_prompt,
         start_instruction=assistant.assistant_start_instruction or "Greet the user Professionally",
         tools=tools,
+        stt_usage=_cascade_stt_usage,
     )
 
     # LLM vendor is orthogonal to mode. `is_realtime` = model speaks its own audio
@@ -586,7 +722,10 @@ async def entrypoint(ctx: JobContext):
     llm_config = assistant.assistant_llm_config or {}
     _default_provider = "gemini" if is_realtime else "openai"
     realtime_provider = (llm_config.get("provider") or _default_provider).lower()
-    # Set inside the half-cascade branches when Sarvam parallel STT is active.
+    # Set inside the half-cascade branches when Sarvam parallel STT is active. Bound here,
+    # unconditionally and before the session exists, because _persist_usage reads it to
+    # decide whether to bill the tap's audio — and it swallows exceptions, so an unbound
+    # name would silently zero the whole usage record instead of raising.
     _use_sarvam_stt = False
     _stt_provider, _stt_config = resolve_stt(assistant)
 
@@ -601,7 +740,7 @@ async def entrypoint(ctx: JobContext):
     _stt_prompt = build_native_stt_prompt(
         interaction_config.preferred_languages, is_phone_call=_is_phone_call
     )
-    _native_transcription = AudioTranscription(model="gpt-4o-mini-transcribe", prompt=_stt_prompt)
+    _native_transcription = AudioTranscription(model=NATIVE_TRANSCRIBE_MODEL, prompt=_stt_prompt)
 
     # Shared by the two OpenAI realtime branches (full realtime and half-cascade). The default
     # lives in model_support so the API validates the model this line will actually pick.
@@ -641,7 +780,7 @@ async def entrypoint(ctx: JobContext):
         if llm is None:
             return
         if not is_text_only:
-            cascade_stt = create_stt(assistant)
+            cascade_stt = create_stt(assistant, usage=_cascade_stt_usage)
             if cascade_stt is None:
                 return
         logger.info(
@@ -678,7 +817,8 @@ async def entrypoint(ctx: JobContext):
                 api_key=llm_config.get("api_key") or settings.GOOGLE_API_KEY,
             )
         elif realtime_provider == "openai":
-            llm = realtime.RealtimeModel(
+            llm = MeteredRealtimeModel(
+                usage=_native_usage,
                 model=_openai_realtime_model,
                 voice=llm_config.get("voice", "marin"),
                 modalities=["audio"],
@@ -720,7 +860,8 @@ async def entrypoint(ctx: JobContext):
             )
 
         if realtime_provider == "openai":
-            llm = realtime.RealtimeModel(
+            llm = MeteredRealtimeModel(
+                usage=_native_usage,
                 model=_openai_realtime_model,
                 input_audio_transcription=None if _use_sarvam_stt else _native_transcription,
                 input_audio_noise_reduction=_noise_reduction,
@@ -967,6 +1108,39 @@ async def entrypoint(ctx: JobContext):
         if silence_watchdog and role == "assistant" and not user_is_speaking:
             silence_watchdog.on_assistant_message(text)
 
+    # --- Exotel Bridge: Call-Answered Handling ---
+    # Registered before session.start(), not after: the room connects *inside*
+    # session.start() (tool loading, TTS prewarm, the inbound-context webhook can all run
+    # for 10s+ before it returns), and a data_received emit is a plain synchronous pyee
+    # dispatch with no buffering or replay. A call_answered message published by the SIP
+    # bridge while session.start() was still running used to arrive with nobody listening
+    # yet and be lost for good — the only recovery was the 60s gate timeout below. This spot
+    # is provably before the room can receive anything, so the message can no longer be missed.
+    @ctx.room.on("data_received")
+    def on_data_received(data: rtc.DataPacket):
+        if data.topic == "sip_bridge_events":
+            try:
+                msg = json.loads(data.data.decode())
+                if msg.get("event") == "call_answered":
+                    logger.info("Bridge reported call answered via data message (SIP 200 OK)")
+                    gate.mark_answered()
+                    if is_exotel_outbound:
+                        asyncio.create_task(recorder.start_once())
+                        asyncio.create_task(
+                            livekit_services.update_call_status(
+                                room_name=ctx.room.name,
+                                call_status="answered",
+                                call_status_reason=None,
+                                answered_at=datetime.now(timezone.utc),
+                            )
+                        )
+                elif msg.get("event") == "call_hold":
+                    hold_controller.signal_hold(True)
+                elif msg.get("event") == "call_resume":
+                    hold_controller.signal_hold(False)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
     # --- Start Session ---
     logger.info("Starting AgentSession...")
     await session.start(agent=agent_instance, room=ctx.room, room_options=room_options)
@@ -1032,32 +1206,6 @@ async def entrypoint(ctx: JobContext):
             elif event.old_state == "speaking":
                 input_guard.on_speaking_end()
 
-    # --- Exotel Bridge: Call-Answered Handling ---
-    @ctx.room.on("data_received")
-    def on_data_received(data: rtc.DataPacket):
-        if data.topic == "sip_bridge_events":
-            try:
-                msg = json.loads(data.data.decode())
-                if msg.get("event") == "call_answered":
-                    logger.info("Bridge reported call answered via data message (SIP 200 OK)")
-                    gate.mark_answered()
-                    if is_exotel_outbound:
-                        asyncio.create_task(recorder.start_once())
-                        asyncio.create_task(
-                            livekit_services.update_call_status(
-                                room_name=ctx.room.name,
-                                call_status="answered",
-                                call_status_reason=None,
-                                answered_at=datetime.now(timezone.utc),
-                            )
-                        )
-                elif msg.get("event") == "call_hold":
-                    hold_controller.signal_hold(True)
-                elif msg.get("event") == "call_resume":
-                    hold_controller.signal_hold(False)
-            except (json.JSONDecodeError, TypeError):
-                pass
-
     # Wait for participant
     logger.info("Waiting for participant...")
     participant = await ctx.wait_for_participant()
@@ -1068,6 +1216,13 @@ async def entrypoint(ctx: JobContext):
     # readiness gate, recorder start and a full audio playout, and with close_on_disconnect
     # =False nothing else ends the job — so a caller who hung up in that window used to get
     # no teardown at all. Every name this closure reads is already bound by this point.
+    #
+    # _hangup_event lets the greeting block's waits (gate, recorder, warmup sleep) bail out
+    # immediately on disconnect instead of running to completion — including a live
+    # egress-start API call — concurrently with _flush_and_end_call already tearing the
+    # same room/session down.
+    _hangup_event = asyncio.Event()
+
     @ctx.room.on("participant_disconnected")
     def on_participant_disconnected(participant):
         nonlocal call_end_triggered
@@ -1082,6 +1237,7 @@ async def entrypoint(ctx: JobContext):
                 f"(primary={primary_participant_identity})"
             )
             return
+        _hangup_event.set()
         if call_end_triggered:
             logger.info(f"Call end already triggered for room: {ctx.room.name}")
             return
@@ -1164,12 +1320,24 @@ async def entrypoint(ctx: JobContext):
             target_identity=primary_participant_identity,
             coalescer=_user_coalescer,
             stop_event=_sarvam_stop,
+            usage=_sarvam_usage,
             api_key=_stt_config.get("api_key"),
             model=_stt_config.get("model"),
             language=_stt_config.get("language"),
             mode=_stt_config.get("mode"),
             assistant_id=assistant.assistant_id,
         ))
+
+    async def _usage_flusher():
+        # ponytail: a sleep loop, not a session_usage_updated subscription. session.usage is
+        # readable at any time, the SDK event fires several times per turn and rejects async
+        # handlers, and the two STT taps that run outside the AgentSession emit no event at
+        # all. _persist_usage swallows its own exceptions, so a Mongo blip cannot kill this.
+        while True:
+            await asyncio.sleep(USAGE_FLUSH_INTERVAL_S)
+            await _persist_usage(final=False)
+
+    _usage_task = asyncio.create_task(_usage_flusher())
 
     # --- Start Instruction ---
     should_speak_first = interaction_config.speaks_first
@@ -1198,20 +1366,12 @@ async def entrypoint(ctx: JobContext):
 
                 if is_exotel_bridge:
                     logger.info("Exotel bridge detected — waiting for call_answered event before speaking")
-                    answered = await gate.wait_until_ready(timeout=60.0)
-                    if answered:
-                        recording_ready = await recorder.ensure_started(timeout=12.0)
-                        if not recording_ready:
-                            logger.warning(
-                                "[EXOTEL] Recording did not become ready before first reply; proceeding"
-                            )
-                        logger.info(
-                            f"[EXOTEL] call_answered confirmed — sleeping {EXOTEL_RTP_WARMUP_SLEEP_SEC}s for RTP + egress warmup"
-                        )
-                        await asyncio.sleep(EXOTEL_RTP_WARMUP_SLEEP_SEC)
-                    else:
-                        logger.warning("[EXOTEL] Timed out waiting for call_answered — skipping start instruction")
-                        should_send_instruction = False
+                    should_send_instruction = await _wait_to_speak_or_hangup(
+                        gate=gate,
+                        recorder=recorder,
+                        hangup_event=_hangup_event,
+                        warmup_sec=EXOTEL_RTP_WARMUP_SLEEP_SEC,
+                    )
 
                 if should_send_instruction:
                     # The text recorded for the silence watchdog (transcript when prerecorded).
@@ -1285,45 +1445,3 @@ async def entrypoint(ctx: JobContext):
             "assistant_speaks_first=False — skipping start instruction; "
             "assistant is silent and waiting for the user to speak first"
         )
-
-
-def _worker_load(worker) -> float:
-    """Report this worker's load as a fraction of the jobs it is willing to run.
-
-    The SDK default measures CPU across the whole machine. That made job intake depend on
-    whatever else the host was doing: when the SIP dispatcher spiked CPU launching bridge
-    processes, this worker quietly stopped accepting jobs, so calls connected with no agent
-    behind them and the caller heard nothing. Counting our own jobs keeps the decision local
-    and predictable.
-    """
-    # Measured against the global ceiling, not the telephony cap: this worker runs the agent
-    # job for *every* call type — phone, web and passthrough — so the telephony cap alone would
-    # make it refuse web jobs it has ample room for.
-    max_jobs = max(1, settings.MAX_CONCURRENT_SESSIONS)
-    return min(1.0, len(worker.active_jobs) / max_jobs)
-
-
-if __name__ == "__main__":
-    cli.run_app(
-        WorkerOptions(
-            api_key=settings.LIVEKIT_API_KEY,
-            api_secret=settings.LIVEKIT_API_SECRET,
-            ws_url=settings.LIVEKIT_URL,
-            job_memory_warn_mb=1024,
-            # A hard ceiling, not just a warning. Only job_memory_warn_mb was set before, which
-            # logs and does nothing, so a leaking session grew until the container OOMed and
-            # took every call running alongside it down with it.
-            job_memory_limit_mb=2048,
-            entrypoint_fnc=entrypoint,
-            agent_name="api-agent",
-            # Raised from 2: at a dozen simultaneous calls, jobs past the second one queued
-            # behind a cold process start each.
-            num_idle_processes=4,
-            load_fnc=_worker_load,
-            # The SDK refuses a job when load >= threshold, so 1.0 means "refuse once we are
-            # already running MAX_CONCURRENT_JOBS". Anything lower would make the worker refuse
-            # jobs the dispatcher is still willing to send, and a dispatched call with no agent
-            # behind it is a call that connects to silence.
-            load_threshold=1.0,
-        )
-    )

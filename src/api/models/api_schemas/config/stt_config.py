@@ -1,8 +1,11 @@
 from typing import Annotated, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from src.core.model_support.speech import unsupported_speech_model_reason
+from src.core.model_support.speech import (
+    OPENAI_STT_DURATION_BILLED_MODELS,
+    unsupported_speech_model_reason,
+)
 from src.core.providers.keys import ProviderApiKey
 
 
@@ -33,9 +36,9 @@ class SarvamSTTConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["sarvam"] = "sarvam"
-    model: str = Field("saaras:v3", max_length=40, description="Sarvam STT model: saaras:v3 (recommended), saaras:v2.5 or saarika:v2.5")
+    model: str = Field("saaras:v3", max_length=40, description="Sarvam STT model: saaras:v3 (default) or saaras:v4. The v2.5 models were sunset by Sarvam and are no longer accepted.")
     language: str = Field("unknown", max_length=10, description="BCP-47 language code, or 'unknown' to auto-detect")
-    mode: str = Field("codemix", max_length=20, description="Transcription mode (saaras:v3 only): codemix (default — keeps code-switching intact), transcribe, translate, verbatim or translit")
+    mode: str = Field("codemix", max_length=20, description="Transcription mode: codemix (default — keeps code-switching intact), transcribe, translate, verbatim or translit")
     api_key: ProviderApiKey = Field(None, min_length=1, max_length=500, description="Sarvam API key for the parallel STT tap (optional, falls back to system SARVAM_API_KEY). Distinct from assistant_tts_config.api_key, which belongs to the selected TTS provider.")
 
     @field_validator("model", mode="after")
@@ -106,13 +109,32 @@ class OpenAISTTConfig(BaseModel):
     detect_language: bool = Field(False, description="Auto-detect the spoken language instead of pinning one. Overrides `language`.")
     prompt: Optional[str] = Field(None, max_length=500, description="Text prompt biasing the transcription (names, jargon, spellings). whisper-1 only — the gpt-4o transcribe models ignore it.")
     noise_reduction_type: Optional[Literal["near_field", "far_field"]] = Field(None, description="Server-side noise reduction: 'near_field' for headsets, 'far_field' for speakerphone/room mics. Omit for none.")
-    use_realtime: bool = Field(True, description="Stream over the realtime transcription WebSocket (interim results, low latency). Set false to use the batch REST transcription API — cheaper, but adds a full utterance of latency per turn.")
+    use_realtime: bool = Field(True, description="Stream over the realtime transcription WebSocket (interim results, low latency). Set false to use the batch REST transcription API — cheaper, but adds a full utterance of latency per turn, and only 'whisper-1' may use it: the batch path reports no token usage, so a token-billed model on it records zero STT spend for the call.")
     api_key: ProviderApiKey = Field(None, min_length=1, max_length=500, description="OpenAI API key for the STT stage (optional, falls back to system OPENAI_API_KEY — the same variable the cascade LLM uses). Distinct from assistant_tts_config.api_key.")
 
     @field_validator("model", mode="after")
     @classmethod
     def _model_is_real(cls, value):
         return check_stt_model("openai", value)
+
+    @model_validator(mode="after")
+    def _batch_path_is_only_for_duration_billing(self):
+        """The batch REST path reports no token usage, so it may only carry whisper-1.
+
+        Every other OpenAI STT model is billed per token, and the plugin's non-realtime path
+        discards the server's usage entirely — the call would connect, transcribe fine, and
+        store `stt_input_tokens: 0`, which is indistinguishable from an assistant that never
+        transcribed at all. whisper-1 is billed by audio duration, which that path does
+        measure locally, so it is the one model the pairing is safe for.
+        """
+        if not self.use_realtime and self.model not in OPENAI_STT_DURATION_BILLED_MODELS:
+            raise ValueError(
+                f"use_realtime=false is not supported for OpenAI STT model {self.model!r}: "
+                "the batch transcription API reports no token usage, so the call would record "
+                "zero STT spend. Use use_realtime=true, or model 'whisper-1', which is billed "
+                "by audio duration."
+            )
+        return self
 
 
 STTConfig = Annotated[

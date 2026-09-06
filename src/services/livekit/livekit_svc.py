@@ -433,20 +433,57 @@ class LiveKitService:
         # Enrich with usage data if available
         usage_record = await UsageRecord.find_one(UsageRecord.room_name == room_name)
         if usage_record:
+            # Use Pydantic's JSON encoder for Decimal monetary fields before handing the
+            # payload to httpx, whose standard JSON encoder cannot serialize Decimal.
+            usage_json = json.loads(usage_record.model_dump_json())
             filtered_data["usage"] = {
                 "mode": usage_record.mode,
+                "call_duration_minutes": usage_record.call_duration_minutes,
+                "call_service": usage_record.call_service,
+                "tts_provider": usage_record.tts_provider,
+                "llm_realtime_provider": usage_record.llm_realtime_provider,
                 "llm_model": usage_record.llm_model,
+                "llm_input_tokens": usage_record.llm_input_tokens,
+                "llm_output_tokens": usage_record.llm_output_tokens,
                 "llm_input_audio_tokens": usage_record.llm_input_audio_tokens,
                 "llm_input_text_tokens": usage_record.llm_input_text_tokens,
+                "llm_input_image_tokens": usage_record.llm_input_image_tokens,
                 "llm_output_audio_tokens": usage_record.llm_output_audio_tokens,
                 "llm_output_text_tokens": usage_record.llm_output_text_tokens,
                 "llm_total_tokens": usage_record.llm_total_tokens,
+                # Cached counts are a subset of the input counts above, not an addition
+                # to them — see UsageRecord in db_schemas.py before pricing off these.
+                "llm_input_cached_tokens": usage_record.llm_input_cached_tokens,
+                "llm_input_cached_audio_tokens": usage_record.llm_input_cached_audio_tokens,
+                "llm_input_cached_text_tokens": usage_record.llm_input_cached_text_tokens,
+                "llm_input_cached_image_tokens": usage_record.llm_input_cached_image_tokens,
+                "llm_input_cache_creation_tokens": usage_record.llm_input_cache_creation_tokens,
+                "llm_session_duration": usage_record.llm_session_duration,
                 "tts_characters_count": usage_record.tts_characters_count,
                 "tts_audio_duration": usage_record.tts_audio_duration,
-                # Populated in cascade mode only — see UsageRecord in db_schemas.py.
+                # Token-billed TTS providers only; character-billed ones report zero.
+                "tts_input_tokens": usage_record.tts_input_tokens,
+                "tts_output_tokens": usage_record.tts_output_tokens,
+                # Zero only in Gemini realtime — see UsageRecord in db_schemas.py.
                 "stt_provider": usage_record.stt_provider,
                 "stt_model": usage_record.stt_model,
                 "stt_audio_duration": usage_record.stt_audio_duration,
+                # Token-billed STT (OpenAI) only; duration-billed providers report zero.
+                "stt_input_tokens": usage_record.stt_input_tokens,
+                # Subsets of stt_input_tokens, never additional to it.
+                "stt_input_audio_tokens": usage_record.stt_input_audio_tokens,
+                "stt_input_text_tokens": usage_record.stt_input_text_tokens,
+                "stt_output_tokens": usage_record.stt_output_tokens,
+                "usage_schema_version": usage_record.usage_schema_version,
+                "model_usage": usage_json.get("model_usage", []),
+                "sdk_version": usage_record.sdk_version,
+                # False means the worker never reached teardown, so these counts are the
+                # last mid-call snapshot rather than the final total.
+                "usage_finalized": usage_record.usage_finalized,
+                "estimated_cost_usd": usage_json.get("estimated_cost_usd"),
+                "pricing_schema_version": usage_json.get("pricing_schema_version"),
+                "pricing_complete": usage_json.get("pricing_complete", False),
+                "unpriced_model_usage": usage_json.get("unpriced_model_usage", []),
             }
 
         payload = {

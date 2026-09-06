@@ -38,12 +38,13 @@ COPY docs /app/docs
 COPY mkdocs.yml /app/mkdocs.yml
 COPY server_run.py /app/server_run.py
 COPY sip_dispatcher_run.py /app/sip_dispatcher_run.py
+COPY agent_run.py /app/agent_run.py
 
 # Build MkDocs documentation
 RUN mkdocs build -d site
 
 # Download necessary files (models, etc.) during build
-RUN python -m src.core.agents.session download-files && mkdir -p /app/logs
+RUN python -m livekit.agents download-files && mkdir -p /app/logs
 
 # Expose the API port
 EXPOSE 8001

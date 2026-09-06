@@ -12,6 +12,49 @@ Given how this platform is used, that includes anything that changes **what a ca
 
 ---
 
+## 1.2.0
+
+Outbound Exotel answer-to-speech release. Callers reported 5-6s of silence after picking up an
+outbound call, sometimes much longer — this release fixes the actual cause, not just the symptom.
+
+### A dropped `call_answered` message could silence the whole call
+
+The agent's listener for the SIP bridge's `call_answered` data message was registered *after*
+`session.start()` returned. `session.start()` can itself take 10s+ (the inbound-context webhook,
+tool loading, TTS prewarm), and a LiveKit `data_received` event is a plain synchronous dispatch
+with no buffering or replay — if the callee answered while the agent was still booting, the
+message arrived with nobody listening yet, and was gone for good. The only recovery was the
+60-second gate timeout, meaning a call could connect and the agent could stay silent for up to a
+minute in the worst case, not just the reported 5-6s.
+
+The listener is now registered before `session.start()` runs, closing the window entirely — the
+room cannot receive any data message before this point, so the fix is unconditional, not a race
+that's merely less likely to lose.
+
+### The post-answer wait no longer ignores a hang-up
+
+Before speaking, the agent waits for `call_answered`, then for recording to start, then a short
+fixed RTP/egress warmup pause. If the callee answered and immediately hung up, none of that used
+to notice — the agent kept running the full sequence (including a live recording-start API call)
+for up to ~13s, concurrently with the call's own teardown already tearing down the same room and
+session state.
+
+That sequence is now raced against the participant-disconnected signal: a hang-up during the wait
+aborts it immediately and skips the greeting, instead of running to completion after the call is
+already over.
+
+### Slow calls now log where the time went
+
+Every outbound Exotel call logs one `[EXOTEL] phase timing` line breaking the wait down into
+`gate_wait`, `recorder_wait` and `warmup` — so if a future call is unusually slow, the log shows
+which phase caused it instead of it looking like an unexplained one-off.
+
+The fixed post-answer warmup pause (`EXOTEL_RTP_WARMUP_SLEEP_SEC`) and the bridge's own 0.5s
+mixer-settle pause before publishing `call_answered` are unchanged — both remain load-bearing and
+are not addressed by this release.
+
+---
+
 ## 1.1.0
 
 Concurrency and call-setup release. 1.0 worked well at low volume and came apart at 12–14

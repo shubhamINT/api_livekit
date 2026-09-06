@@ -104,8 +104,9 @@ def validate_sarvam_language(model: str | None, code: str | None, *, assistant_i
     """Return a Sarvam STT language code that is safe to construct with.
 
     Sarvam gets its own function for two reasons the generic table cannot express. Its
-    accepted set is **per model** — saarika:v2.5 speaks a subset of what saaras:v3 does —
-    and the plugin *raises* `ValueError` on a code outside that set rather than warning.
+    accepted set is **per model** — the sunset saarika:v2.5 spoke a subset of what saaras:v3
+    does, and the current roster can diverge again the same way — and the plugin *raises*
+    `ValueError` on a code outside that set rather than warning.
     Unguarded, one stale code in a stored config takes the whole job down at start, which
     is a harder failure than any of the wrong-standard bugs this module was written for.
 
@@ -164,9 +165,11 @@ def validate_sarvam_mode(model: str | None, mode: str | None, *, assistant_id: s
     """Return a Sarvam transcription mode safe to construct with, or None to leave it unset.
 
     Same trap as the language: `mode` is model-gated and the plugin raises rather than
-    warning. Only saaras:v3 supports it — saarika:v2.5 and saaras:v2.5 reject anything but
-    their own default, so the repo-wide "codemix" default is fatal on them. None makes the
-    plugin pick that model's default, which is the only correct value there anyway.
+    warning. Every model on the current roster (saaras:v3, saaras:v4) takes it, but the
+    sunset v2.5 pair rejected anything but its own default, which made the repo-wide
+    "codemix" default fatal on them. The gate stays because the roster gained a model once
+    and can gain a mode-less one again. None makes the plugin pick that model's default,
+    which is the only correct value there anyway.
     """
     config = _SARVAM_STT_MODELS.get(model or "")
     if config is None or config.supports_mode:
@@ -175,7 +178,7 @@ def validate_sarvam_mode(model: str | None, mode: str | None, *, assistant_id: s
     if mode and mode != config.default_mode:
         logger.warning(
             f"Sarvam model {model!r} does not support transcription mode {mode!r} "
-            f"(saaras:v3 only) on assistant {assistant_id} — using the model's default."
+            f"on assistant {assistant_id} — using the model's default."
         )
     return None
 
@@ -203,17 +206,19 @@ if __name__ == "__main__":
     # Sarvam: per-model sets, and the plugin RAISES on a bad code rather than warning.
     assert validate_sarvam_language("saaras:v3", "hi-IN", assistant_id="t") == "hi-IN"
     assert validate_sarvam_language("saaras:v3", "en-US", assistant_id="t") == SARVAM_AUTO
-    # saaras:v3-only code sent to saarika:v2.5 — the case the generic table cannot see.
-    assert validate_sarvam_language("saarika:v2.5", "sat-IN", assistant_id="t") == SARVAM_AUTO
     assert validate_sarvam_language("saaras:v3", "sat-IN", assistant_id="t") == "sat-IN"
+    assert validate_sarvam_language("saaras:v4", "sat-IN", assistant_id="t") == "sat-IN"
+    # A model the plugin has no config for is passed through untouched: the plugin knows its
+    # own roster better than a copy of it does. This is the path every sunset model takes.
+    assert validate_sarvam_language("saarika:v2.5", "sat-IN", assistant_id="t") == "sat-IN"
     # Empty string is reachable from the API and must mean auto-detect, not en-IN.
     for blank in (None, "", "   ", "unknown"):
         assert validate_sarvam_language("saaras:v3", blank, assistant_id="t") == SARVAM_AUTO
-    # Mode is model-gated the same way, and the repo-wide "codemix" default is fatal on the
-    # two models that do not support it.
+    # Mode is model-gated the same way. Every model on the current roster takes it, and an
+    # unknown model is passed through for the plugin to judge.
     assert validate_sarvam_mode("saaras:v3", "codemix", assistant_id="t") == "codemix"
-    assert validate_sarvam_mode("saarika:v2.5", "codemix", assistant_id="t") is None
-    assert validate_sarvam_mode("saaras:v2.5", "codemix", assistant_id="t") is None
+    assert validate_sarvam_mode("saaras:v4", "codemix", assistant_id="t") == "codemix"
+    assert validate_sarvam_mode("saarika:v2.5", "codemix", assistant_id="t") == "codemix"
     # TTS speakers are per generation, and the two generations overlap in nothing: every
     # bulbul:v2 speaker is a job-killing ValueError on bulbul:v3.
     assert validate_sarvam_speaker("bulbul:v3", "shubh", assistant_id="t") == "shubh"

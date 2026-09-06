@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from typing import Optional, Literal, List, Dict
+from decimal import Decimal
 from beanie import Document, Indexed
 from pydantic import BaseModel, Field, EmailStr
 from pymongo import IndexModel
@@ -356,24 +357,69 @@ class UsageRecord(Document):
     llm_realtime_provider: Optional[str] = None  # LLM vendor "gemini" | "openai" (recorded for all modes)
     llm_model: Optional[str] = None  # e.g. "gpt-4.1-mini", "gpt-realtime-1.5"
 
-    # LLM tokens (from session.usage — exact values)
+    # LLM tokens (from session.usage — exact values).
+    #
+    # Cached counts are SUBSETS, not separate buckets:
+    #   llm_input_cached_text_tokens <= llm_input_text_tokens <= llm_input_tokens
+    # and llm_total_tokens (input + output) already contains every cached token. Pricing
+    # multiplies the cached slice by the discounted rate and the remainder by the full
+    # rate; adding the two columns together double-counts. The one exception is
+    # llm_input_cache_creation_tokens, which providers bill as a write on top of the read.
+    llm_input_tokens: int = 0
+    llm_output_tokens: int = 0
     llm_input_audio_tokens: int = 0
     llm_input_text_tokens: int = 0
+    llm_input_image_tokens: int = 0
+    llm_input_cached_tokens: int = 0
     llm_input_cached_audio_tokens: int = 0
     llm_input_cached_text_tokens: int = 0
+    llm_input_cached_image_tokens: int = 0
+    llm_input_cache_creation_tokens: int = 0
     llm_output_audio_tokens: int = 0
     llm_output_text_tokens: int = 0
     llm_total_tokens: int = 0
+    llm_session_duration: float = 0.0  # seconds; session-billed providers only
 
-    # TTS usage (from session.usage — exact values)
+    # TTS usage (from session.usage — exact values). Character-billed providers fill
+    # tts_characters_count; token-billed ones fill the token pair instead.
     tts_characters_count: int = 0
     tts_audio_duration: float = 0.0  # seconds
+    tts_input_tokens: int = 0
+    tts_output_tokens: int = 0
 
-    # STT usage. Only a mode with a standalone STT stage (cascade) reports these; in
-    # pipeline/realtime the LLM transcribes internally and the cost is inside its tokens.
+    # STT usage. Filled from three places: the cascade STT stage the AgentSession owns, the
+    # pipeline-mode Sarvam tap (which measures its own audio), and the transcription the
+    # OpenAI Realtime API runs on the caller, which it bills separately from the realtime
+    # model itself. Only Gemini realtime leaves these at zero, because its input audio is
+    # already inside the LLM prompt tokens — see docs/reference/usage-accounting.md.
     stt_provider: Optional[str] = None  # "sarvam" | "cartesia" | "deepgram" | "elevenlabs" | "openai" | "native"
     stt_model: Optional[str] = None  # e.g. "saaras:v3", "ink-whisper", "nova-3", "scribe_v2_realtime", "gpt-4o-mini-transcribe"
     stt_audio_duration: float = 0.0  # seconds of audio transcribed
+    stt_input_tokens: int = 0  # token-billed STT (OpenAI) only
+    # Subsets of stt_input_tokens, never additional to it. OpenAI bills transcription audio
+    # and text input at different rates and reports the split; other providers report 0.
+    stt_input_audio_tokens: int = 0
+    stt_input_text_tokens: int = 0
+    stt_output_tokens: int = 0
+
+    # Per (provider, model) usage, filtered to billable components. Metrics and model ids are
+    # SDK-reported; provider is normalized to a stable lowercase billing-vendor key.
+    model_usage: List[Dict] = Field(default_factory=list)
+    estimated_cost_usd: Optional[Decimal] = None
+    pricing_schema_version: Optional[int] = None
+    pricing_complete: bool = False
+    unpriced_model_usage: List[Dict] = Field(default_factory=list)
+    # 1 = pre-2026-09 rows, which carry only the flat LLM/TTS columns and no model_usage.
+    # 2 = every field above with plugin-reported provider spellings.
+    # 3 = every field above with normalized model_usage providers.
+    usage_schema_version: int = 1
+    sdk_version: Optional[str] = None  # livekit-agents version that produced the numbers
+    # True only on the write teardown makes. The row is also written every
+    # USAGE_FLUSH_INTERVAL_S while the call runs, so False means either the call is still in
+    # progress or the worker died before teardown: the counts are a floor, not the final
+    # bill. Rows written before 2026-09 were only ever written once, at teardown, and read
+    # False because the field did not exist — check usage_schema_version to tell them apart.
+    usage_finalized: bool = False
 
     # Telephony duration (copied from CallRecord for aggregation convenience)
     call_duration_minutes: float = 0.0

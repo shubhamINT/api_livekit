@@ -19,7 +19,10 @@ FastAPI backend plus LiveKit worker for real-time voice assistants with `pipelin
 - Sends post-call webhook notifications with both actual and billable call duration.
 - Writes activity logs for tool calls, inbound context lookup, and end-call webhook delivery.
 - Tracks per-call usage via SDK metrics: LLM tokens, TTS characters, and — in `cascade` mode — STT audio duration attributed to its own stage.
-- Provides analytics endpoints for call duration, volume, and usage monitoring.
+- Tracks per-model `(component, provider, model)` usage with normalized provider keys, and includes it in the end-call webhook.
+- Provides per-call usage, per-user token summaries, and per-model analytics endpoints.
+- Includes versioned estimated AI-provider cost in per-call usage, webhooks, and token analytics;
+  public-rate gaps are reported as partial pricing rather than silently treated as free.
 - Super-admin endpoints for cross-tenant analytics and token usage visibility.
 - Protects worker capacity by buffering outbound requests and limiting new job intake under higher CPU load.
 
@@ -81,6 +84,7 @@ tables: [Compatibility Matrix](docs/reference/compatibility.md).
 | `uv run python scripts/replay_cascade_request.py <assistant_id>` | *Why* did the provider refuse this assistant's request? Replays the exact payload over HTTPS and, when no parameter is named, bisects the knobs automatically. |
 | `uv run python scripts/check_model_allowlist.py` | Is every allowlisted model still servable by this key? Exits non-zero on drift, so it works as a pre-deploy gate. Add `--probe <model>` to test one id — `/v1/models` lists deprecated ids that answer `404`. |
 | `uv run python scripts/audit_assistant_models.py` | Which stored assistants hold a model this deployment cannot run? `--apply` clears the field so they fall back to the default. |
+| `uv run python scripts/normalize_model_usage_providers.py` | Preview legacy v2 provider spellings in usage records; add `--apply` to migrate them to schema v3. |
 
 All three are read-only unless `--apply` is passed, and none of them print an API key.
 Symptom-by-symptom guide: [Troubleshooting](docs/reference/troubleshooting.md).
@@ -256,7 +260,7 @@ uv run sip_dispatcher_run.py
 Start worker in another terminal:
 
 ```bash
-uv run -m src.core.agents.session dev
+uv run agent_run.py dev
 ```
 
 Optional Docker flow:
@@ -311,6 +315,13 @@ Backfill existing call records with billable minutes:
 uv run python -m scripts.backfill_billable_duration_minutes
 ```
 
+Preview provider normalization for existing usage records, then apply it explicitly:
+
+```bash
+uv run python scripts/normalize_model_usage_providers.py
+uv run python scripts/normalize_model_usage_providers.py --apply
+```
+
 ## Documentation
 
 - MkDocs source lives in `docs/`. The same markdown is served to coding agents over MCP at
@@ -342,6 +353,7 @@ Use these pages as the canonical payload contracts:
 - Inbound context strategy webhook: `docs/api/inbound-context-strategy/index.md`
 - Tool webhook payload and response handling: `docs/api/tools/webhook.md`
 - End-call webhook payload: `docs/api/calls/webhook.md`
+- Per-call usage: `docs/api/calls/usage.md`
 
 ## API Areas
 
@@ -353,11 +365,12 @@ Use these pages as the canonical payload contracts:
 - `/call/queue/{queue_id}`
 - `/call/outbound_passthrough` — start a passthrough call (web ↔ SIP, no agent)
 - `/call/records` — list call records with optional filters; `passthrough_only=true` for passthrough-only view
+- `/call/records/{room_name}/usage` — retrieve one owned call's full usage record, including `model_usage`
 - `/inbound`
 - `/inbound_context_strategy`
 - `/logs`
 - `/web_call/get_token` — supports `text_only: true` for chatbot mode (no audio, no recording; `pipeline` and `cascade` assistants, not `realtime`)
-- `/analytics` — per-user call analytics (dashboard, by-assistant, by-phone-number, by-time, by-service)
+- `/analytics` — per-user call and token analytics (dashboard, call breakdowns, token summary, tokens by model)
 - `/admin` — super-admin cross-tenant analytics and token usage (requires `is_super_admin` flag)
 
 ## Assistant Modes
@@ -379,7 +392,7 @@ Two axes: **mode** (`assistant_mode`) = how many models are in the loop, **provi
   - Requires `assistant_tts_model` and `assistant_tts_config`, same as pipeline
   - `assistant_stt_model` is the session's own STT stage: `sarvam` (default, multilingual), or `cartesia`, `deepgram`, `elevenlabs`, `openai` (all cascade-only). `native` is rejected — there is no realtime model to self-transcribe
   - `assistant_llm_config.provider` must be `openai` (the default); `model` defaults to `gpt-4.1`, so cheap text models like `gpt-4.1-mini` are available
-  - The only mode reporting **per-component usage**: `stt_provider` / `stt_model` / `stt_audio_duration` land on `UsageRecord` and the end-of-call webhook alongside the LLM and TTS numbers
+  - Reports **per-component usage** like the other modes: `stt_provider` / `stt_model` / `stt_audio_duration` land on `UsageRecord` and the end-of-call webhook alongside the LLM and TTS numbers
   - Does not use the Sarvam parallel tap; turn detection is local (in-process Silero VAD + a bundled audio end-of-utterance model), so nothing here needs LiveKit Cloud
 
 Note: `assistant_start_instruction` is honored in all three modes whenever `assistant_interaction_config.speaks_first` is enabled.
@@ -431,6 +444,7 @@ api_livekit/
 ├── mkdocs.yml
 ├── server_run.py
 ├── sip_dispatcher_run.py
+├── agent_run.py
 ├── deploy.sh
 ├── .agents/
 │   ├── workflows/

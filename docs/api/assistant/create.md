@@ -64,9 +64,9 @@ For the full model/provider inventory (model IDs, defaults, per-mode validity) s
 
         | Field | Type | Required | Description |
         | :--- | :--- | :--- | :--- |
-        | `model` | string | No | Sarvam STT model. Default: `saaras:v3`. |
+        | `model` | string | No | Sarvam STT model: `saaras:v3` (default) or `saaras:v4`. |
         | `language` | string | No | BCP-47 code, or `unknown` to auto-detect. Default: `unknown`. |
-        | `mode` | string | No | Transcription mode. Default: `codemix` (keeps code-switching intact). `saaras:v3` only. |
+        | `mode` | string | No | Transcription mode. Default: `codemix` (keeps code-switching intact). |
         | `api_key` | string | No | Optional Sarvam API key. Falls back to system `SARVAM_API_KEY`. **Distinct from `assistant_tts_config.api_key`**, which belongs to whichever TTS provider you selected — Sarvam STT rejects a Cartesia/ElevenLabs/Mistral key with `403`. Masked in `GET /assistant/details` and `GET /assistant/list`. |
 
         Allowed `model` and `mode` values: [Models & Providers](../../reference/models.md#stt).
@@ -109,8 +109,8 @@ For the full model/provider inventory (model IDs, defaults, per-mode validity) s
         | Field | Type | Required | Description |
         | :--- | :--- | :--- | :--- |
         | `voice_id` | string | Yes | ElevenLabs voice ID. |
-        | `model` | string | No | TTS model. Default: `eleven_v3`. Also `eleven_multilingual_v2`, `eleven_turbo_v2_5`, `eleven_flash_v2_5`. |
-        | `voice_settings` | object | No | Voice tuning: `{ "stability": 0–1, "similarity_boost": 0–1, "style": 0–1, "speed": 0.25–4.0, "use_speaker_boost": bool }`. **`speed` has no effect on `eleven_v3`** (the default model) — it is dropped before the call and logged; pick `eleven_multilingual_v2`, `eleven_turbo_v2_5` or `eleven_flash_v2_5` if you need to change the speaking rate. On v3, `stability` reads as three modes: `0.0` creative, `0.5` natural, `1.0` robust. |
+        | `model` | string | No | TTS model. Default: `eleven_v3`. Also `eleven_v3_conversational`, `eleven_multilingual_v2`, `eleven_turbo_v2_5`, `eleven_flash_v2_5`. |
+        | `voice_settings` | object | No | Voice tuning: `{ "stability": 0–1, "similarity_boost": 0–1, "style": 0–1, "speed": 0.25–4.0, "use_speaker_boost": bool }`. **`speed` has no effect on `eleven_v3` or `eleven_v3_conversational`** (the first is the default model) — it is dropped before the call and logged; pick `eleven_multilingual_v2`, `eleven_turbo_v2_5` or `eleven_flash_v2_5` if you need to change the speaking rate. On the v3 models, `stability` reads as three modes: `0.0` creative, `0.5` natural, `1.0` robust. |
         | `api_key` | string | No | Optional ElevenLabs API key. Falls back to system `ELEVENLABS_API_KEY`. |
 
     === "Mistral"
@@ -231,7 +231,7 @@ For the full model/provider inventory (model IDs, defaults, per-mode validity) s
 
         | Field | Type | Required | Description |
         | :--- | :--- | :--- | :--- |
-        | `model` | string | No | Sarvam STT model. Default: `saaras:v3`. |
+        | `model` | string | No | Sarvam STT model: `saaras:v3` (default) or `saaras:v4`. |
         | `language` | string | No | `unknown` (default) auto-detects; or a fixed BCP-47 code. |
         | `mode` | string | No | Transcription mode. Default: `codemix`. |
         | `api_key` | string | No | Falls back to system `SARVAM_API_KEY`. |
@@ -277,7 +277,7 @@ For the full model/provider inventory (model IDs, defaults, per-mode validity) s
         | `detect_language` | boolean | No | Auto-detect the spoken language instead of pinning one. Default: `false`. Overrides `language`. |
         | `prompt` | string | No | Biases spellings and jargon (names, product terms). **`whisper-1` only** — the gpt-4o transcribe models accept and ignore it. |
         | `noise_reduction_type` | string | No | Server-side noise reduction: `near_field` (headset) or `far_field` (speakerphone / room mic). Omitted applies none. |
-        | `use_realtime` | boolean | No | Streams over OpenAI's realtime transcription WebSocket (interim results, low latency). Default: `true`. Set `false` for the batch REST API — cheaper, but adds a full utterance of latency per turn. |
+        | `use_realtime` | boolean | No | Streams over OpenAI's realtime transcription WebSocket (interim results, low latency). Default: `true`. Set `false` for the batch REST API — cheaper, but adds a full utterance of latency per turn, and accepted **only with `model: "whisper-1"`**: the batch path reports no token usage, so a token-billed model on it would record zero STT spend for the call. |
         | `api_key` | string | No | Optional OpenAI key for the STT stage. Falls back to system `OPENAI_API_KEY`, the same variable the cascade LLM stage uses. |
 
     > **Don't assume all STT providers auto-detect when `language`/`language_code` is omitted.**

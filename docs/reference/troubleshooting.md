@@ -199,7 +199,8 @@ ends. Most are now refused at create/update time instead:
 | Cause | Now caught by |
 |---|---|
 | A provider with no API key (per-assistant or system) | `422` at create, `400` at update |
-| An STT/TTS model id that does not exist (`nova-9`, `saaras:v4`) | `422` — the accepted sets are in `src/core/model_support/speech.py` |
+| An STT/TTS model id that does not exist (`nova-9`, `saaras:v9`) | `422` — the accepted sets are in `src/core/model_support/speech.py` |
+| A Sarvam STT model the vendor has sunset (`saaras:v2.5`, `saarika:v2.5`) | `422` — migrate to `saaras:v3` or `saaras:v4`; `scripts/audit_assistant_models.py` finds stored assistants still holding one |
 | A `bulbul:v2` Sarvam speaker (`anushka`, `manisha`, …) on the pinned `bulbul:v3` | `422` — v2 and v3 share no speaker names |
 | `assistant_stt_model: "native"` in cascade mode | `422` — there is no realtime model to self-transcribe |
 | A Gemini chat model (`gemini-2.5-flash`) in realtime mode | `422` — only the three Live models can hold a session |
@@ -331,6 +332,74 @@ If instead you see `Agent ready (audio track published)` rather than `Agent read
 event)`, the agent container is running a build that predates the readiness signal. The fallback
 works, but it fires slightly earlier than the real signal — redeploy the agent to get the tighter
 timing.
+
+---
+
+## An outbound caller hears a delay between pickup and the greeting
+
+Expected behaviour is a short, bounded pause — the fixed RTP/egress warmup pause plus whatever the
+call actually needed to confirm answer and start recording. Look for this line in the agent log
+for the call in question:
+
+```
+[EXOTEL] phase timing | gate_wait=0.01s recorder_wait=0.02s warmup=1.00s total=1.03s
+```
+
+- `gate_wait` — time from the wait starting until the bridge's `call_answered` message arrived.
+  Should be near-zero; a large value means the message took a while to arrive or (rarely) the
+  60-second wait timed out entirely (look for `Timed out waiting for call_answered` instead of
+  this line).
+- `recorder_wait` — time waiting for recording to start. Recording is kicked off in the background
+  the moment the call is answered, so this is normally near-zero regardless of its 12s timeout;
+  a large value means the egress start itself was slow, not that the timeout needs tuning.
+- `warmup` — the fixed RTP/egress-settle pause (`EXOTEL_RTP_WARMUP_SLEEP_SEC`, default `1.0s`).
+  Intentional, not a bug.
+
+If you see `[EXOTEL] Caller hung up while waiting to speak` instead, the callee disconnected
+during the wait — the greeting was correctly skipped rather than being sent (or attempted) after
+the call had already ended.
+
+---
+
+## Usage record is all zeros
+
+The call ran, the transcript is there, but `usage_records` shows `0` everywhere (or the
+webhook's `data.usage` block is missing entirely).
+
+| Symptom | Cause |
+|---|---|
+| No `usage_records` row at all | The worker died in the first 15 s, before any snapshot was written, or the call never got past setup. A worker that dies later leaves the last snapshot behind. The worker log has `Failed to persist usage record`. |
+| A row exists but `usage_finalized` is `false`, and the call is over | The worker never reached teardown — crash, OOM kill, container restart. The counts are the last mid-call snapshot: a floor, missing up to 15 s of usage, with `call_duration_minutes` stopped at the same moment. Check the worker log for the job that owned that `room_name`. |
+| A row exists but `usage_finalized` is `false`, and the call is still up | Expected. The record is rewritten every 15 s while the call runs and the flag flips at teardown. |
+| Every field `0`, `model_usage` empty, `Could not read session usage` in the log | Teardown ran before `AgentSession` was built — the call failed during setup. Check for an earlier error in the same job. |
+| STT fields `0` on a Gemini `realtime` call | Expected, and nothing is missing. Gemini's Live API reports no per-transcription usage; the caller's audio is already inside the LLM prompt tokens. |
+| STT fields `0` on an OpenAI `realtime` call | Not expected. The Realtime API's own ASR reports usage on every transcription, so a zero means no transcription ran at all — check that `input_audio_transcription` was configured. The teardown log line shows `stt=none`. |
+| STT fields `0` on a `pipeline` call | Not expected either way. With Sarvam, the tap did not run (`text_only`, or `assistant_stt_model` fell back to native); without it, the Realtime API's ASR reported nothing. The teardown log line shows `stt=none`. |
+| `stt_audio_duration` is `0` on a cascade Sarvam call | Not expected. The duration is counted by the session (`DynamicAssistant.stt_node`), not taken from Sarvam, so it does not depend on what the server reported — a zero means no audio ever reached the STT stage. Check for a text-only call, or an inbound track that never published. |
+| `stt_audio_duration` runs a few seconds short on `deepgram` flux or `elevenlabs` | Expected, and bounded. Both plugins flush their usage collector every 5 s and never flush it again at stream close, so up to 5 s per stream is uncounted. Deepgram `nova-*` does flush, and tops up with connection wall-clock. |
+| `stt_input_tokens` is `0` on a cascade OpenAI call | The assistant is on the batch REST path (`use_realtime: false`), which reports no usage. The API now rejects that pairing for the token-billed models; a row stored before that gate is overridden at call time with a `use_realtime=false` warning in the worker log. Only `whisper-1` is billed by duration and may use batch. |
+| `stt_audio_duration` is `0` but `stt_input_tokens` is not | Correct for token-billed STT. The OpenAI ASR charges per token, not per second; `stt_input_audio_tokens` carries the audio share. |
+| `usage_schema_version` is `1` | An old record. The cached-token and token-billed STT/TTS fields did not exist when it was written; they read `0` because nothing was captured, not because nothing was used. |
+| `usage_schema_version` is `2` and providers differ in casing or use `api.openai.com` | Run `uv run python scripts/normalize_model_usage_providers.py` to preview, then rerun with `--apply`. The migration rewrites only version-2 rows and sets them to version 3. |
+| `model_usage` providers disagree between calls | Compare `usage_schema_version`. Version 2 preserves plugin spellings; version 3 normalizes lowercase vendors and maps `*.openai.com` to `openai`. |
+| Cached tokens `0` on a cascade call | Normal on a short call. OpenAI only caches a prompt above its own minimum length, and the first turn never hits. |
+
+To read one row directly:
+
+```bash
+uv run python -c "
+import asyncio
+from src.core.db.database import init_db
+from src.core.db.db_schemas import UsageRecord
+
+async def main():
+    await init_db()
+    r = await UsageRecord.find_one(UsageRecord.room_name == 'ROOM_NAME')
+    print(r.model_dump_json(indent=2) if r else 'no usage record')
+
+asyncio.run(main())
+"
+```
 
 ---
 

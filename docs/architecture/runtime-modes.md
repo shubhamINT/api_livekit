@@ -32,6 +32,12 @@ Dockerfile mode mapping:
 - `agent` deploys use `docker/Dockerfile.agent`
 - `full` deploys force all services to use the original `Dockerfile`
 
+The `agent` container launches the worker with `python -m livekit.agents start agent_run.py`.
+`agent_run.py` builds the `AgentServer` from `WorkerOptions`; the SDK's CLI imports that file
+and looks for a module-level `AgentServer` named `server`. Locally the equivalent is
+`uv run agent_run.py dev`, which still goes through the SDK's deprecated Python CLI and says so
+in a warning.
+
 Commands:
 
 ```bash
@@ -203,6 +209,7 @@ sequenceDiagram
 - Spawned once after `wait_for_participant()` returns, scoped to the caller's identity. Late-binds if the audio track was already published. The task handle is kept (`_sarvam_task`) so teardown can tell the two STT paths apart, and so a crash inside the tap is not swallowed.
 - Stop signal: re-uses the existing `_sarvam_stop = asyncio.Event()` that already gates the Sarvam TTS keepalive — both exit on the same teardown.
 - Frame pump: `rtc.AudioStream(track, sample_rate=16000, num_channels=1)` upsamples 8 kHz G.711 phone audio in-process; frames pushed via `stream.push_frame(frame)`.
+- Usage: the pump also sums each frame's duration into the `SttUsage` tally it was handed, which teardown turns into the call's `stt_usage` entry. The tap's plugin STT never reaches the `AgentSession`, so this is the only place the seconds can be counted — see [Usage accounting](../reference/usage-accounting.md).
 - Duplicate-write guard: `conversation_item_added` short-circuits when `event.item.role == "user" and _use_sarvam_stt`, so OpenAI's empty / stale user item never reaches the DB.
 - Shared transcript helper: `_enqueue_transcript(speaker, text, timestamp=None)` queues the DB write — used by both the Sarvam callback and the OpenAI assistant-role path. Single source of truth for the `add_transcript` call shape.
 - Silence watchdog: the coalescer's emit callback calls `silence_watchdog.on_user_message()` to reset the reprompt timer, preserving parity with the OpenAI-only path.
@@ -235,10 +242,12 @@ When `assistant_stt_model="native"` — and always in full realtime mode, where 
 
 **Prompt and noise reduction.** `src/core/agents/stt/native_prompt.py` builds the transcription prompt (`build_native_stt_prompt`) and picks the noise-reduction model (`noise_reduction_for`: `far_field` on phone calls, whose model is trained on lossy G.711; `near_field` on web). The prompt carries `interaction_config.preferred_languages` as a hint plus the literal-transcription rules — native script, no romanization, no translation, `[inaudible]` rather than a guess. Both feed every OpenAI branch, half-cascade and full realtime alike. Full realtime previously passed neither and ran on the `gpt-4o-mini-transcribe` default with no instructions and no phone tuning.
 
-**Model choice.** Both branches use `gpt-4o-mini-transcribe`. The Indic failures above came from an unprompted, un-tuned side channel, not from model size, and mini accepts the prompt and `far_field` just as `gpt-4o-transcribe` does — so the fix carries no per-minute cost increase. Upgrading the model is a one-word change in `session.py`, worth making only against a measured accuracy comparison.
+**Usage.** The Realtime API bills this ASR on its own pricing, separately from the realtime model, and reports the tokens on every `conversation.item.input_audio_transcription.completed` event — which the LiveKit plugin's handler drops. `src/core/agents/stt/native_usage.py` reads them off the plugin's public raw event stream (`openai_server_event_received`) and hands them to `summarize_usage`, so a `realtime` or native-`pipeline` call records `stt_provider="openai"` with real token counts instead of a zero. Gemini reports none, and none is missing: its input audio is already inside the LLM prompt tokens. See [Usage accounting](../reference/usage-accounting.md).
+
+**Model choice.** Both branches use `gpt-4o-mini-transcribe` (`NATIVE_TRANSCRIBE_MODEL`, defined beside the tally so the two cannot drift). The Indic failures above came from an unprompted, un-tuned side channel, not from model size, and mini accepts the prompt and `far_field` just as `gpt-4o-transcribe` does — so the fix carries no per-minute cost increase. Upgrading the model is a one-word change in `src/core/agents/stt/native_usage.py`, worth making only against a measured accuracy comparison.
 
 **Language is never pinned.** `AudioTranscription.language` is deliberately left unset so a caller who switches language mid-call is still transcribed correctly — matching the Sarvam tap's `language="unknown"` default. `preferred_languages` steers the model; it does not constrain it.
 
 **Gemini caveat.** `genai_types.AudioTranscriptionConfig()` takes no arguments, so none of the prompt applies on a Gemini assistant — it transcribes on its own defaults. Gemini also cannot recover the last utterance before a hangup; see the end-of-call drain table above.
 
-**Hold and the readiness gate do not suppress the caller.** `should_record(role, on_hold, gate_active)` in `session.py` decides what reaches the transcript. Both conditions exist to keep the *agent* quiet and out of the record, so they apply to assistant items only. `CallReadinessGate.is_active` flips on a single `call_answered` SIP data packet, so gating user speech on it meant one dropped or malformed packet discarded every transcript for the whole call, silently, while the conversation carried on normally. The Sarvam callback never consulted either check, so this also makes the two paths behave identically. Trade-off: pre-answer ring audio and on-hold speech can now be stored if the model transcribes any. Pinned by `tests/test_should_record.py`.
+**Hold and the readiness gate do not suppress the caller.** `should_record(role, on_hold, gate_active)` in `session.py` decides what reaches the transcript. Both conditions exist to keep the *agent* quiet and out of the record, so they apply to assistant items only. `CallReadinessGate.is_active` flips on a single `call_answered` SIP data packet, so gating user speech on it meant one dropped or malformed packet discarded every transcript for the whole call, silently, while the conversation carried on normally. The Sarvam callback never consulted either check, so this also makes the two paths behave identically. Trade-off: pre-answer ring audio and on-hold speech can now be stored if the model transcribes any. Pinned by `tests/test_should_record.py`. The listener that flips `CallReadinessGate` is now registered before `session.start()` runs (previously after), so the one `call_answered` packet this gate depends on can no longer arrive and be missed while the agent is still booting.

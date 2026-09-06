@@ -191,8 +191,8 @@ graph TD
         In v1 (thread-per-bridge), a `concurrent.futures.Future` was shared in-memory between the bridge thread and the monitor task. The monitor used `asyncio.wrap_future()` to await it. This worked because threads share the same process address space. With subprocess isolation, `Future` cannot cross process boundaries; `multiprocessing.Queue` is used instead — for inbound as well as outbound.
 
 - On SIP setup timeout, the dispatcher calls `bridge_process.terminate()` (SIGTERM). The parent monitor's `finally` block always releases the pre-allocated port and unregisters the `call_id` regardless of how the subprocess exits.
-- Agent speech and recording are gated by bridge `call_answered` signaling to avoid recording before answer.
-- After readiness is confirmed, start-instruction delivery applies to both runtime modes (`pipeline` and `realtime`).
+- Agent speech and recording are gated by bridge `call_answered` signaling to avoid recording before answer. The agent's listener for this data-channel event is registered in `session.py` before `session.start()` runs, not after — `session.start()` can itself take several seconds (tool loading, TTS prewarm, the inbound-context webhook), and a data-channel event has no buffering or replay, so registering the listener any later left a window where an answer arriving mid-boot was silently missed.
+- After readiness is confirmed, start-instruction delivery applies to both runtime modes (`pipeline` and `realtime`), following a bounded wait/recorder/warmup sequence (see `docs/api/calls/flow.md#exotel-runtime-gating`) that is raced against the callee hanging up, so a call that ends right after answer doesn't leave the agent process blocking on a stale wait.
 - Terminal status finalization and webhook emission are handled through a single lifecycle path to reduce duplicate or conflicting terminal updates.
 - If SIP returns `200 OK` but no RTP ever arrives (`no_rtp_after_answer`), lifecycle final status is treated as `failed`.
 

@@ -12,4 +12,4 @@ behaviour changes in a way an operator has to know about, which given how this p
 includes anything that alters what a caller hears.
 """
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"

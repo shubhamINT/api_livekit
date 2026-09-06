@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable
 
 from livekit import rtc
 from livekit.agents import stt as stt_pkg
+from livekit.agents.metrics import STTModelUsage
 from livekit.plugins import sarvam as sarvam_plugin
 
 from src.core.agents.audio_denoise import SpeechGate
@@ -35,6 +37,35 @@ DRAIN_SILENCE_S = 2.0
 _SILENCE_FRAME = rtc.AudioFrame(
     b"\x00" * 640, sample_rate=16000, num_channels=1, samples_per_channel=320
 )
+
+
+@dataclass
+class SttUsage:
+    """How much audio this tap fed to Sarvam, for the call's UsageRecord.
+
+    Measured here rather than taken from Sarvam's own RECOGNITION_USAGE event. That event
+    carries whatever the server put in `metrics.audio_duration`, which is absent on some
+    responses and would then record a silent zero — indistinguishable from "no transcription
+    ran", which is the exact failure this accounting exists to remove. The number can differ
+    slightly from the seconds Sarvam bills; it is never falsely zero.
+
+    This is the audio the tap sent, which includes frames SpeechGate muted — it zeroes
+    samples, not frames, and the zeros still go over the open connection. The one thing
+    left out is the DRAIN_SILENCE_S burst at hangup, which is fed from `_stop_watch` rather
+    than from the pump.
+    """
+
+    model: str = ""
+    audio_duration: float = 0.0
+
+    def to_model_usage(self) -> STTModelUsage:
+        """Shape the tally like an entry the SDK's own collector would have produced, so
+        `summarize_usage` folds it with no per-mode special case."""
+        return STTModelUsage(
+            provider="sarvam",
+            model=self.model or "saaras:v3",
+            audio_duration=self.audio_duration,
+        )
 
 
 class FinalCoalescer:
@@ -98,6 +129,7 @@ async def run_sarvam_parallel_stt(
     target_identity: str,
     coalescer: FinalCoalescer,
     stop_event: asyncio.Event,
+    usage: SttUsage,
     api_key: str | None = None,
     model: str | None = None,
     language: str | None = None,
@@ -111,6 +143,7 @@ async def run_sarvam_parallel_stt(
     dropping it, so the caller's last sentence survives a hangup.
     """
     sarvam_model = model or "saaras:v3"
+    usage.model = sarvam_model
     sarvam_stt = sarvam_plugin.STT(
         model=sarvam_model,
         # Same field, same meaning as in cascade (see src/core/agents/stt/factory.py) —
@@ -118,8 +151,8 @@ async def run_sarvam_parallel_stt(
         # Indian language mid-sentence.
         mode=validate_sarvam_mode(sarvam_model, mode or "codemix", assistant_id=assistant_id),
         # Validated, not passed through: the plugin RAISES on a code its model does not
-        # speak (saarika:v2.5 accepts fewer than saaras:v3), which would take down the tap
-        # for the whole call. An empty string is reachable from the API too — the schema
+        # speak, which would take down the tap for the whole call. The accepted set is per
+        # model. An empty string is reachable from the API too — the schema
         # sets no min_length — and the plugin reads it as en-IN rather than auto-detect.
         language=validate_sarvam_language(sarvam_model, language, assistant_id=assistant_id),
         # Never assistant_tts_config["api_key"] — that key belongs to the selected TTS
@@ -142,6 +175,10 @@ async def run_sarvam_parallel_stt(
         try:
             async for ev in audio:
                 stream.push_frame(ev.frame)
+                # Every frame, gated or not. SpeechGate zeroes non-speech samples in place
+                # and returns the same frame, so gated audio is still sent to Sarvam over
+                # an open connection — which is what Sarvam meters.
+                usage.audio_duration += ev.frame.duration
         except asyncio.CancelledError:
             pass
         except Exception as e:

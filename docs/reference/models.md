@@ -167,11 +167,11 @@ don't always agree, see the quirks below.
 
 | Provider | Valid in | Model default | Other config |
 |---|---|---|---|
-| `sarvam` | `pipeline` (default), `cascade` | `saaras:v3` (also `saaras:v2.5`, `saarika:v2.5`) | `language` default `unknown` (auto-detect); `mode` default `codemix` (also `transcribe`, `translate`, `verbatim`, `translit`; honoured in both pipeline and cascade) |
+| `sarvam` | `pipeline` (default), `cascade` | `saaras:v3` (also `saaras:v4`) | `language` default `unknown` (auto-detect); `mode` default `codemix` (also `transcribe`, `translate`, `verbatim`, `translit`; honoured in both pipeline and cascade) |
 | `cartesia` | `cascade` only | `ink-whisper` (43 languages) or `ink-2` (English only) | `language` fixed ISO 639-1, no auto-detect, default `en` |
 | `deepgram` | `cascade` only | `nova-3` (multilingual, 45 languages); also `nova-2`, `flux-general-en` (English), `flux-general-multi` | `language` BCP-47 or `multi` (auto-detect; omitted — `multi` on `nova-3` / `flux-general-multi`, `en-US` on the rest); `enable_diarization` (bool, default `false` — omitted stays **off**, never force-enabled); `keyterm` (string or list — omitted — not sent, no biasing); `api_key` falls back to system `DEEPGRAM_API_KEY` |
 | `elevenlabs` | `cascade` only | `scribe_v2_realtime` (auto-detects ~190 languages); also `scribe_v2`, `scribe_v1` | `language_code` **ISO 639-3** (`eng`, `hin`) — omit to auto-detect; `no_verbatim` (bool, default `false` — omitted keeps fillers); `api_key` falls back to system `ELEVENLABS_API_KEY` — the same variable the ElevenLabs TTS provider uses |
-| `openai` | `cascade` only (in `pipeline` it collapses to `native`) | `gpt-4o-mini-transcribe`; also `gpt-4o-transcribe`, `whisper-1` | `language` ISO 639-1 — omitting it turns on `detect_language` rather than pinning English; `detect_language` (bool, default `false`) turns on auto-detect and overrides `language`; `prompt` (whisper-1 only); `noise_reduction_type` (`near_field` / `far_field`); `use_realtime` (bool, default **`true`** — streams over the realtime transcription socket); `api_key` falls back to system `OPENAI_API_KEY` — the same variable the cascade LLM uses |
+| `openai` | `cascade` only (in `pipeline` it collapses to `native`) | `gpt-4o-mini-transcribe`; also `gpt-4o-transcribe`, `whisper-1` | `language` ISO 639-1 — omitting it turns on `detect_language` rather than pinning English; `detect_language` (bool, default `false`) turns on auto-detect and overrides `language`; `prompt` (whisper-1 only); `noise_reduction_type` (`near_field` / `far_field`); `use_realtime` (bool, default **`true`** — streams over the realtime transcription socket; `false` is accepted only with `whisper-1`); `api_key` falls back to system `OPENAI_API_KEY` — the same variable the cascade LLM uses |
 | `native` | `pipeline` only — rejected in `cascade` (no realtime model to self-transcribe) | n/a (the conversational LLM transcribes itself: `gpt-4o-mini-transcribe`) | no config |
 
 Ignored entirely in `realtime` mode (the model always transcribes itself).
@@ -204,9 +204,9 @@ provider (cartesia / deepgram / elevenlabs) degrades to native transcription wit
 
 | Provider | Channel (config key) | Default | Meaning | What changes if you change it |
 |---|---|---|---|---|
-| `sarvam` | `model` | `saaras:v3` | which Saras model transcribes | `saaras:v2.5` or `saarika:v2.5` swap the model; omitted keeps the default |
-| `sarvam` | `language` | `unknown` | `unknown` = auto-detect, keeps code-switching with `codemix` | a BCP-47 Indic code (`hi-IN`) locks one fixed language; omitted stays auto-detect. The accepted set is **per model** — `saarika:v2.5` and `saaras:v2.5` take 11 codes, `saaras:v3` takes 23. A code outside the selected model's set is dropped back to `unknown` with a logged error |
-| `sarvam` | `mode` | `codemix` on `saaras:v3`, otherwise the model's own default | transcription style (`codemix`, `transcribe`, `translate`, `verbatim`, `translit`) | **`saaras:v3` only.** On `saarika:v2.5` / `saaras:v2.5` the key is dropped before construction with a logged warning — see the pitfall below |
+| `sarvam` | `model` | `saaras:v3` | which Saras model transcribes | `saaras:v4` swaps the model; omitted keeps the default. The `saaras:v2.5` / `saarika:v2.5` pair was sunset by Sarvam and is rejected with a `422` |
+| `sarvam` | `language` | `unknown` | `unknown` = auto-detect, keeps code-switching with `codemix` | a BCP-47 Indic code (`hi-IN`) locks one fixed language; omitted stays auto-detect. The accepted set is **per model** (both current models take the same 23 codes, but the roster has diverged before). A code outside the selected model's set is dropped back to `unknown` with a logged error |
+| `sarvam` | `mode` | `codemix` | transcription style (`codemix`, `transcribe`, `translate`, `verbatim`, `translit`) | both current models accept it; on a model that does not, the key is dropped before construction with a logged warning — see the pitfall below |
 | `sarvam` | `api_key` | system `SARVAM_API_KEY` | auth for the STT call | per-assistant override wins; both missing → **pipeline** falls back to `native` (warning), **cascade** aborts |
 | `cartesia` | `model` | `ink-whisper` (pinned in factory) | 43-language STT model | `ink-2` is English only; the factory pins the model explicitly so the plugin's own default flip can't bite |
 | `cartesia` | `language` | `en` | exactly one fixed language — **no auto-detect** | ISO 639-1 only (`en`, `hi`) — a BCP-47 code like `en-US` is rejected and logged, and the default is used; omitted means `en` |
@@ -225,7 +225,7 @@ provider (cartesia / deepgram / elevenlabs) degrades to native transcription wit
 | `openai` | `detect_language` | `false` | auto-detect the spoken language | `true` blanks `language` and lets the model detect; omitted keeps the pinned language |
 | `openai` | `prompt` | not sent | biases spellings/jargon (names, product terms) | a string biases recognition on **`whisper-1` only**; the gpt-4o transcribe models ignore it |
 | `openai` | `noise_reduction_type` | not sent | server-side noise reduction | `near_field` (headset) or `far_field` (speakerphone / room mic); omitted sends none |
-| `openai` | `use_realtime` | `true` | streams over OpenAI's realtime transcription WebSocket (interim results, low latency) | `false` switches to the batch REST API — cheaper, but adds a full utterance of latency per turn and gives no interim results. **This inverts the plugin's own default**, which is batch |
+| `openai` | `use_realtime` | `true` | streams over OpenAI's realtime transcription WebSocket (interim results, low latency) | `false` switches to the batch REST API — cheaper, but adds a full utterance of latency per turn, gives no interim results, and is **rejected for every model except `whisper-1`** because that path reports no token usage. **This inverts the plugin's own default**, which is batch |
 | `openai` | `api_key` | system `OPENAI_API_KEY` | auth — the same variable the cascade LLM stage uses | override wins; both missing → **cascade** aborts (in pipeline the provider is already collapsed to `native`) |
 
 `native` (pipeline only) takes no config — the conversational LLM transcribes itself
@@ -236,8 +236,9 @@ provider (cartesia / deepgram / elevenlabs) degrades to native transcription wit
 These are the easy-to-miss traps. All statements match the plugin behaviour in LiveKit Agents.
 
 - **Sarvam `language` and `mode` are gated per model, and the plugin *raises* rather than
-  warning.** `mode` exists on `saaras:v3` alone; the language set on `saarika:v2.5` /
-  `saaras:v2.5` is the 11-code subset. Passed straight through, either mismatch is a
+  warning.** `saaras:v3` and `saaras:v4` currently accept the same languages and modes, but
+  the roster has diverged before: the sunset `saarika:v2.5` took no `mode` at all and spoke
+  an 11-code subset of what `saaras:v3` speaks. Passed straight through, either mismatch is a
   `ValueError` out of the STT constructor — which ends the job before the call connects,
   a harder failure than any wrong language code elsewhere on this page. Both are therefore
   validated first: a bad language falls back to `unknown` (auto-detect), an unsupported
@@ -292,9 +293,12 @@ These are the easy-to-miss traps. All statements match the plugin behaviour in L
 - **OpenAI STT: `prompt` only works on `whisper-1`.** The `gpt-4o-transcribe` family accepts the
   field and ignores it — no error, no biasing. If you need prompt biasing, pick `whisper-1` (and
   accept that it is the slower, batch-only model).
-- **OpenAI STT: `use_realtime: false` is a latency decision, not a cosmetic one.** Batch mode holds
-  each utterance until it ends, then transcribes it in one HTTP call — no interim results, and the
-  turn-taking pipeline waits. Only switch it off when cost beats responsiveness.
+- **OpenAI STT: `use_realtime: false` is accepted only for `whisper-1`.** Batch mode holds each
+  utterance until it ends, then transcribes it in one HTTP call — no interim results, the
+  turn-taking pipeline waits, and the response carries no usage at all. The other OpenAI STT
+  models are billed per token, so batch mode would store zero STT spend for the call; that
+  pairing is a 422. `whisper-1` is billed by audio duration, which the batch path measures
+  locally, so it is the one model that may use it.
 - **OpenAI STT: `detect_language` beats `language`.** Setting both is not an error — `language` is
   simply dropped. Pick one.
 - **Multilingual billing.** Deepgram `language: "multi"` (and any multilingual detection) is billed at a higher per-minute rate than monolingual. Factor this in before enabling it broadly.
@@ -309,7 +313,7 @@ except ElevenLabs** (which now accepts a `model` key). Synthesis params are conf
 |---|---|---|---|
 | `cartesia` | `sonic-3` (fixed) | `voice_id` | `language` (default `en`), `speed` (float `0`–`3`, default `1.0`), `volume` (default `1.0`), `emotion`, `pronunciation_dict_id` |
 | `sarvam` | `bulbul:v3` (fixed) | `speaker` — **v3 roster only**, see below | `target_language_code` (default `en-IN`), `pace` (`0.3`–`3.0`, default `1.0`), `speech_sample_rate` (one of `8000`/`16000`/`22050`/`24000`/`32000`/`44100`/`48000`, default `24000`), `temperature` (`0.01`–`2.0`, default `0.3`) |
-| `elevenlabs` | `eleven_v3` (default) | `voice_id` | `model` (`eleven_v3`, `eleven_multilingual_v2`, `eleven_turbo_v2_5`, `eleven_flash_v2_5`), `voice_settings` (`stability`, `similarity_boost`, `style`, `speed` — **not on v3**, `use_speaker_boost`); non-streaming (HTTP chunked) |
+| `elevenlabs` | `eleven_v3` (default) | `voice_id` | `model` (`eleven_v3`, `eleven_v3_conversational`, `eleven_multilingual_v2`, `eleven_turbo_v2_5`, `eleven_flash_v2_5`), `voice_settings` (`stability`, `similarity_boost`, `style`, `speed` — **not on the v3 models**, `use_speaker_boost`); non-streaming (HTTP chunked) |
 | `mistral` | `voxtral-mini-tts-2603` (fixed) | `voice_id` | `response_format="opus"`, non-streaming |
 
 All four accept an optional `api_key`, falling back to the matching system key
@@ -319,10 +323,10 @@ Speed is therefore **configurable per assistant** for Cartesia, Sarvam and Eleve
 providers whose SDK exposes a rate knob). See each tab in [create](../api/assistant/create.md) for
 valid ranges.
 
-**ElevenLabs `speed` does not apply to `eleven_v3`**, which is the default model here — v3 has no
-speed control at all
+**ElevenLabs `speed` does not apply to `eleven_v3` or `eleven_v3_conversational`**, and the first
+of those is the default model here — the v3 family has no speed control at all
 ([ElevenLabs docs](https://elevenlabs.io/docs/eleven-creative/playground/text-to-speech)). A `speed`
-stored against v3 is dropped before the call with a log line naming the models that do support it
+stored against either is dropped before the call with a log line naming the models that do support it
 (`eleven_multilingual_v2`, `eleven_turbo_v2_5`, `eleven_flash_v2_5`); the rest of `voice_settings`
 is sent unchanged. On v3, `stability` also behaves as three modes — creative (`0.0`), natural
 (`0.5`), robust (`1.0`) — rather than a continuum.

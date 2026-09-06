@@ -53,19 +53,42 @@ Content-Type: application/json
     "call_type": "outbound",
     "call_service": "exotel",
     "platform_number": "08044319240",
-    "usage": {
-      "mode": "cascade",
-      "llm_model": "gpt-4.1-mini",
+      "usage": {
+       "mode": "cascade",
+       "call_duration_minutes": 5.5,
+       "call_service": "exotel",
+       "tts_provider": "cartesia",
+       "llm_realtime_provider": "openai",
+       "llm_model": "gpt-4.1-mini",
+       "llm_input_tokens": 9250,
+       "llm_output_tokens": 1230,
       "llm_input_audio_tokens": 0,
       "llm_input_text_tokens": 850,
+      "llm_input_image_tokens": 0,
       "llm_output_audio_tokens": 0,
       "llm_output_text_tokens": 1230,
       "llm_total_tokens": 2080,
+      "llm_input_cached_tokens": 512,
+      "llm_input_cached_audio_tokens": 0,
+      "llm_input_cached_text_tokens": 512,
+      "llm_input_cached_image_tokens": 0,
+      "llm_input_cache_creation_tokens": 0,
+      "llm_session_duration": 0.0,
       "tts_characters_count": 485,
       "tts_audio_duration": 32.5,
+      "tts_input_tokens": 0,
+      "tts_output_tokens": 0,
       "stt_provider": "sarvam",
       "stt_model": "saaras:v3",
-      "stt_audio_duration": 41.75
+      "stt_audio_duration": 41.75,
+      "stt_input_tokens": 0,
+      "stt_input_audio_tokens": 0,
+      "stt_input_text_tokens": 0,
+       "stt_output_tokens": 0,
+       "model_usage": [{"type": "llm_usage", "provider": "openai", "model": "gpt-4.1-mini", "input_tokens": 9250, "output_tokens": 1230}],
+       "usage_schema_version": 3,
+       "sdk_version": "1.7.1",
+      "usage_finalized": true
     }
   }
 }
@@ -104,24 +127,59 @@ Content-Type: application/json
 | `data.call_type`               | string  | Call direction: `outbound`, `inbound`, or `web`. |
 | `data.call_service`            | string  | Telephony provider: `exotel`, `twilio`, or `web`. |
 | `data.platform_number`         | string  | Platform's own phone number used for this call. |
-| `data.usage`                   | object  | Per-component usage metrics (if available). Raw counts, not costs. |
+| `data.usage`                   | object  | Per-component usage metrics and estimated AI-provider cost (if available). |
 | `data.usage.mode`                   | string | Runtime mode for this call: `pipeline`, `realtime` or `cascade`. See [Models & Providers](../../reference/models.md). |
+| `data.usage.call_duration_minutes` | number | Usage record's copied call duration in minutes. |
+| `data.usage.call_service` | string | Telephony service copied onto the usage record. |
+| `data.usage.tts_provider` | string | TTS provider configured for the call. |
+| `data.usage.llm_realtime_provider` | string | Realtime LLM provider, when applicable. |
 | `data.usage.llm_model`              | string | LLM model(s) used, comma-separated if more than one. |
+| `data.usage.llm_input_tokens` | number | Total LLM input tokens. |
+| `data.usage.llm_output_tokens` | number | Total LLM output tokens. |
 | `data.usage.llm_input_audio_tokens` | number | LLM audio input tokens (`0` in cascade — the LLM receives text). |
 | `data.usage.llm_input_text_tokens`  | number | LLM text input tokens.                |
+| `data.usage.llm_input_image_tokens` | number | LLM image input tokens. `0` unless the conversation carried images. |
 | `data.usage.llm_output_audio_tokens`| number | LLM audio output tokens (`0` outside realtime). |
 | `data.usage.llm_output_text_tokens` | number | LLM text output tokens.               |
 | `data.usage.llm_total_tokens`       | number | Total LLM tokens for this call.       |
+| `data.usage.llm_input_cached_tokens`| number | Input tokens served from the provider's prompt cache. **A subset of the input counts above, not an addition to them** — see the warning below. |
+| `data.usage.llm_input_cached_audio_tokens` | number | The audio part of `llm_input_cached_tokens`. |
+| `data.usage.llm_input_cached_text_tokens`  | number | The text part of `llm_input_cached_tokens`. |
+| `data.usage.llm_input_cached_image_tokens` | number | The image part of `llm_input_cached_tokens`. |
+| `data.usage.llm_input_cache_creation_tokens` | number | Input tokens written *into* the cache. Unlike the cached counts, providers that report this bill it on top of the read. `0` on OpenAI, which does not charge for cache writes. |
+| `data.usage.llm_session_duration`   | number | Connection seconds, for providers that bill a realtime session by time rather than by token. `0` otherwise. |
 | `data.usage.tts_characters_count`   | number | Characters sent to TTS provider.      |
 | `data.usage.tts_audio_duration`     | number | TTS audio duration in seconds.        |
-| `data.usage.stt_provider`           | string | STT provider. **`cascade` mode only**, `null` otherwise. |
-| `data.usage.stt_model`              | string | STT model. **`cascade` mode only**, `null` otherwise. |
-| `data.usage.stt_audio_duration`     | number | Seconds of audio transcribed. **`cascade` mode only**, `0` otherwise. |
+| `data.usage.tts_input_tokens`       | number | TTS input tokens. Token-billed TTS only; `0` for character-billed providers. |
+| `data.usage.tts_output_tokens`      | number | TTS output (audio) tokens. Token-billed TTS only. |
+| `data.usage.stt_provider`           | string | Who transcribed the caller: the `cascade` STT stage, the `pipeline` Sarvam tap, or `openai` for the Realtime API's own ASR. `null` only on a Gemini `realtime` call. |
+| `data.usage.stt_model`              | string | STT model, e.g. `saaras:v3` or `gpt-4o-mini-transcribe`. `null` when `stt_provider` is. |
+| `data.usage.stt_audio_duration`     | number | Seconds of audio transcribed. `0` for token-billed STT, which reports tokens instead. |
+| `data.usage.stt_input_tokens`       | number | STT input tokens. Token-billed STT (`openai`) only; `0` for duration-billed providers. |
+| `data.usage.stt_input_audio_tokens` | number | Audio part of `stt_input_tokens` — a subset, not additional. `0` unless the provider reports the split. |
+| `data.usage.stt_input_text_tokens`  | number | Text part of `stt_input_tokens` — a subset, not additional. |
+| `data.usage.stt_output_tokens`      | number | STT output (text) tokens. Token-billed STT only. |
+| `data.usage.model_usage` | array | Per-component `(type, provider, model)` usage entries. Provider values are normalized for schema version 3. |
+| `data.usage.usage_schema_version`   | number | `3` for newly recorded calls. `2` has legacy provider spellings. `1` marks an older partial record; treat missing fields as unknown, not as zero. |
+| `data.usage.sdk_version` | string | `livekit-agents` version that produced the numbers. |
+| `data.usage.usage_finalized`        | boolean | `true` when the counts come from the write the worker makes at teardown. `false` means the worker did not get that far — the record is the last mid-call snapshot, so the counts are a floor rather than the final total. |
 
-!!! note "Why STT fields are empty outside cascade mode"
-    In `pipeline` and `realtime` modes the LLM transcribes internally, so that spend is already
-    counted inside its token totals — there is nothing separate to attribute. Only
-    [`cascade`](../../architecture/cascade-pipeline.md) has a standalone STT stage.
+!!! warning "Cached token counts are subsets"
+    `llm_input_cached_tokens` is part of `llm_total_tokens` already, and each cached
+    per-modality count is part of its matching input count. To price a call, split the input
+    into cached and uncached (`llm_input_text_tokens - llm_input_cached_text_tokens` is the
+    uncached text) and apply the two rates. Adding the cached fields to the input fields
+    charges those tokens twice.
+
+!!! note "Where the STT numbers come from, and what unit they are in"
+    Three different components can transcribe a call, and they are not billed the same way.
+    [`cascade`](../../architecture/cascade-pipeline.md) owns an STT stage inside the agent
+    session. `pipeline` mode with the default Sarvam provider runs a parallel tap outside the
+    session that measures its own audio, so expect a small difference from Sarvam's invoice.
+    `realtime`, and `pipeline` without Sarvam, use the OpenAI Realtime API's own ASR, which is
+    token-billed: `stt_audio_duration` stays `0` and the tokens carry the cost. Only a Gemini
+    `realtime` call reports nothing, because its input audio is already inside the LLM token
+    counts — see [Usage accounting](../../reference/usage-accounting.md).
 
 !!! warning "Breaking change: `usage.llm_mode` → `usage.mode`"
     The old `usage.llm_mode` key was renamed to `usage.mode` (the field never selected an LLM — it

@@ -4,7 +4,7 @@ from typing import Optional
 from datetime import datetime
 from src.api.models.api_schemas import TriggerOutboundCall, TriggerPassthroughCall
 from src.api.models.response_models import apiResponse
-from src.core.db.db_schemas import OutboundSIP, APIKey, Assistant, OutboundCallQueue, CallRecord
+from src.core.db.db_schemas import OutboundSIP, APIKey, Assistant, OutboundCallQueue, CallRecord, UsageRecord
 from src.api.dependencies import get_current_user
 from src.core.logger import logger
 from src.core.providers.keys import redact_text
@@ -94,6 +94,27 @@ async def get_queue_status(
             "retry_count": item.retry_count,
             "last_error": redact_text(item.last_error) if item.last_error else None,
         },
+    )
+
+
+@router.get("/records/{room_name}/usage")
+async def get_call_usage(room_name: str, current_user: APIKey = Depends(get_current_user)):
+    """Return usage for one call owned by the authenticated user."""
+    call_record = await CallRecord.find_one(
+        CallRecord.room_name == room_name,
+        CallRecord.created_by_email == current_user.user_email,
+    )
+    if not call_record:
+        raise HTTPException(status_code=404, detail="Call usage not found")
+
+    usage_record = await UsageRecord.find_one(UsageRecord.room_name == room_name)
+    if not usage_record:
+        raise HTTPException(status_code=404, detail="Call usage not found")
+
+    return apiResponse(
+        success=True,
+        message="Call usage fetched successfully",
+        data=usage_record.model_dump(exclude={"id"}),
     )
 
 
