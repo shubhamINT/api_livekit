@@ -62,7 +62,9 @@ uv run server_run.py
 uv run sip_dispatcher_run.py
 
 # Run LiveKit worker (separate terminal)
-uv run -m src.core.agents.session dev
+# Production runs `python -m livekit.agents start agent_run.py`; `dev` goes through the
+# SDK's deprecated Python CLI, which warns but needs no extra binary.
+uv run agent_run.py dev
 
 # Run tests
 uv run python -m unittest discover -s tests -v
@@ -90,7 +92,7 @@ Three concurrent processes form the runtime:
 
 2. **SIP dispatcher** (`sip_dispatcher_run.py`) — In production, a dedicated process that owns the Exotel inbound SIP listener (`src/services/exotel/custom_sip_reach/inbound_listener.py`) and the outbound dispatch loop (`src/services/outbound_dispatcher/dispatcher.py`). Only one instance should run across all servers.
 
-3. **LiveKit worker** (`src/core/agents/session.py`) — Connects to LiveKit via the agents SDK. `entrypoint()` is the job handler; it resolves the assistant from MongoDB, builds TTS/STT, attaches voice features, and runs the session.
+3. **LiveKit worker** (`agent_run.py` → `src/core/agents/session.py`) — Launched by `python -m livekit.agents start agent_run.py`, which discovers the `AgentServer` that `agent_run.py` builds from `WorkerOptions`. Connects to LiveKit via the agents SDK. `entrypoint()` is the job handler; it resolves the assistant from MongoDB, builds TTS/STT, attaches voice features, and runs the session.
 
 ### Call flow (outbound)
 
@@ -122,6 +124,7 @@ REST routes require `Authorization: Bearer <api_key>` (keys are `lvk_`-prefixed,
 
 | Concern | Path |
 |---|---|
+| Worker launch + `WorkerOptions` | `agent_run.py` |
 | Agent session entrypoint | `src/core/agents/session.py` |
 | Agent class (DynamicAssistant) | `src/core/agents/dynamic_assistant.py` |
 | Session lifecycle (gate, recording) | `src/core/agents/session_lifecycle.py` |

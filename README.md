@@ -256,7 +256,7 @@ uv run sip_dispatcher_run.py
 Start worker in another terminal:
 
 ```bash
-uv run -m src.core.agents.session dev
+uv run agent_run.py dev
 ```
 
 Optional Docker flow:
@@ -431,6 +431,7 @@ api_livekit/
 ├── mkdocs.yml
 ├── server_run.py
 ├── sip_dispatcher_run.py
+├── agent_run.py
 ├── deploy.sh
 ├── .agents/
 │   ├── workflows/

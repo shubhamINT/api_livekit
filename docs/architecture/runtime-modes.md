@@ -32,6 +32,12 @@ Dockerfile mode mapping:
 - `agent` deploys use `docker/Dockerfile.agent`
 - `full` deploys force all services to use the original `Dockerfile`
 
+The `agent` container launches the worker with `python -m livekit.agents start agent_run.py`.
+`agent_run.py` builds the `AgentServer` from `WorkerOptions`; the SDK's CLI imports that file
+and looks for a module-level `AgentServer` named `server`. Locally the equivalent is
+`uv run agent_run.py dev`, which still goes through the SDK's deprecated Python CLI and says so
+in a warning.
+
 Commands:
 
 ```bash

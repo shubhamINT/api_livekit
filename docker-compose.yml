@@ -71,7 +71,7 @@ services:
     volumes:
       - /var/log/lvk_agent:/app/logs
     restart: unless-stopped
-    command: python -m src.core.agents.session start
+    command: python -m livekit.agents start agent_run.py
     ulimits:
       nofile:
         soft: 65536

@@ -53,12 +53,13 @@ installed `livekit-agents` 1.6.7, on 2026-09-04:
 
 ## Doing now
 
-Nothing. PR 0 through PR 4 have all landed, and PR 5 turned out to be empty: every test and
-doc it listed shipped inside the PR that needed it.
+Nothing. PR 0 through PR 4 have all landed, PR 5 turned out to be empty (every test and doc it
+listed shipped inside the PR that needed it), and PR 6 has closed the launch-path follow-up
+PR 0 left behind.
 
 Still outstanding, all needing a real deployment: the PR 0 manual verification (one inbound
 Exotel call and one cascade call — audio both ways, transcript, usage record) and the PR 1 /
-PR 2 / PR 3 / PR 4 verification described in their sections below.
+PR 2 / PR 3 / PR 4 / PR 6 verification described in their sections below.
 
 ## Done
 
@@ -286,6 +287,57 @@ Manual, needs a deployment:
   there was no row.
 - The end-of-call webhook carries `usage.usage_finalized: true`.
 
+**PR 6 — the worker no longer launches through the deprecated Python CLI.** The follow-up PR 0
+deferred. `cli.run_app` in 1.7.1 only emits a `DeprecationWarning` and hands off to
+`livekit/agents/cli/_legacy.py`, which its own docstring says will be removed in a future
+release; production launched through it from three places (`docker/Dockerfile.agent`,
+`Dockerfile`, `docker-compose.yml`).
+
+The supported replacement, `python -m livekit.agents start <entrypoint>`, discovers a
+module-level `AgentServer` rather than taking a `WorkerOptions`. New root file `agent_run.py`
+holds that server, built by `AgentServer.from_server_options(WorkerOptions(...))` — every option
+value moved across unchanged — plus `_worker_load`, which existed only to be its `load_fnc`.
+`src/core/agents/session.py` is now only the job handler; its `__main__` block and two imports
+are gone. Build-time `download-files` became `python -m livekit.agents download-files`, which
+walks the whole `livekit.plugins` namespace instead of whatever our module happened to import:
+six plugin packages, the same set, and `livekit.agents.inference` registers no plugin so the
+local VAD and turn-detector weights were never part of that step.
+
+Two decisions worth keeping:
+
+- **The entrypoint is a root-level file, not `session.py`.** `cli/discover.py` walks parents only
+  while each holds an `__init__.py`, and `src/` has none — it is a namespace package. Pointing the
+  CLI at `src/core/agents/session.py` would import it a second time under the bare name `session`,
+  giving one process two copies of the module. `agent_run.py` sits beside `server_run.py` and
+  `sip_dispatcher_run.py`, which is also where the CLI's own default-path list expects it.
+- **`dev` still runs through the deprecated CLI, on purpose.** `agent_run.py` keeps an
+  `if __name__ == "__main__": cli.run_app(server)` block, so the developer command is
+  `uv run agent_run.py dev` and only production is off the legacy path. The supported alternative,
+  `lk agent dev`, is a separate binary every developer would have to install; that migration is
+  what is left here, and nothing forces it until the SDK deletes `_legacy.py`.
+
+The worker config also had to leave `session.py` for a practical reason: several test modules
+import the job handler, and building an `AgentServer` at import of *that* file would make every
+one of them build a worker.
+
+`tests/test_agent_entrypoint.py` covers the two things that break only at container start — the
+CLI finding a global named `server` that is an `AgentServer`, and `agent_name` still being
+`api-agent` — plus the three `_worker_load` boundaries.
+
+Gates: 499 tests OK, `mkdocs build --strict` clean, 15 Mermaid diagrams parse, ruff on the
+touched files reports only pre-existing violations. Verified locally that
+`get_import_data(Path("agent_run.py"))` resolves to `agent_run:server`, that
+`python -m livekit.agents start agent_run.py` raises no `DeprecationWarning` under
+`-W error::DeprecationWarning`, and that the new `download-files` exits 0 over all six plugins.
+
+Manual, needs a deployment:
+
+- `docker compose --profile agent build` succeeds, including the `download-files` layer.
+- The rebuilt agent container registers and takes one inbound Exotel call and one cascade call —
+  audio both ways, transcript written, a `usage_records` row with `usage_finalized: true`. This
+  doubles as the PR 0 through PR 4 verification still outstanding above.
+- `docker logs` on the agent container shows no `DeprecationWarning` about the built-in CLI.
+
 ## Left
 
 **PR 5 — closed, nothing left to do.** Every item shipped inside the PR that needed it: the
@@ -295,12 +347,12 @@ field-level tests in `TestSummarizeUsage`, the per-mode coverage (PR 2
 the reference page `docs/reference/usage-accounting.md` — whose "Known gaps" section PR 3
 emptied — and the troubleshooting rows.
 
-**Follow-up left by PR 0 — the deprecated Python CLI.**
+**Follow-up left by PR 6 — the developer `dev` command.**
 
-`python -m src.core.agents.session start` (and `download-files` in both Dockerfiles) now emits
-a `DeprecationWarning`; the replacement is the `lk` binary or `python -m livekit.agents`.
-Nothing is broken today. Worth doing before the SDK removes the legacy CLI, and worth doing on
-its own so a launch-path change is not buried in another PR.
+`uv run agent_run.py dev` still goes through the SDK's deprecated Python CLI and warns. The
+replacement is `lk agent dev`, a separate binary each developer installs, so it is a developer-
+setup change rather than a code change. Nothing forces it until the SDK deletes
+`livekit/agents/cli/_legacy.py`; production no longer depends on that module.
 
 **Later, not part of this effort — pricing.**
 
