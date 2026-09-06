@@ -84,6 +84,13 @@ rules, and what happens when you get one wrong, are tabulated in the
 Built by `create_stt` in `src/core/agents/stt/factory.py`. All providers stream by default
 (`openai` is the one that can be switched to batch — see `use_realtime` below).
 
+The Sarvam stage is wrapped in `MeteredSarvamSTT` (`src/core/agents/stt/cascade_usage.py`).
+Transcription is unchanged; only usage reporting is. The plugin reports the audio duration the
+Sarvam server sent, a field that is missing on some responses and absent entirely for a turn
+that transcribed to nothing, so the session counts the frames itself and the plugin's own
+metrics are dropped before the SDK's collector sees them. The other four providers count their
+own frames, or — for `openai` — report the billing tokens, and are used as they come.
+
 **API keys and fallback.** Every STT provider accepts an `api_key` in
 `assistant_stt_config`; a per-assistant value always beats the system key below.
 
@@ -183,7 +190,7 @@ covers both stages.
 | `detect_language` | `false`, or `true` when no valid `language` is set | `bool` — `true` auto-detects the spoken language and overrides `language` |
 | `prompt` | not sent | string biasing spellings and jargon — **`whisper-1` only**, the gpt-4o transcribe models accept and ignore it; omitted sends nothing |
 | `noise_reduction_type` | not sent | `near_field` (headset) or `far_field` (speakerphone / room mic); omitted applies none |
-| `use_realtime` | `true` | `bool` — `true` streams over OpenAI's realtime transcription WebSocket (interim results, low latency); `false` uses the batch REST API — cheaper, but adds a full utterance of latency per turn |
+| `use_realtime` | `true` | `bool` — `true` streams over OpenAI's realtime transcription WebSocket (interim results, low latency); `false` uses the batch REST API — cheaper, but adds a full utterance of latency per turn, and is **accepted only for `whisper-1`** |
 | `api_key` | system `OPENAI_API_KEY` | per-assistant override — wins over the env key; the same variable the cascade LLM stage reads |
 
 Pick this when the assistant is already on OpenAI for the LLM and you want one vendor, one key
@@ -193,7 +200,12 @@ code-switching better inside a single utterance.
 
 `use_realtime` **inverts the plugin's own default** (which is batch REST). A live phone call
 needs interim results and per-utterance streaming, so the factory streams unless you say
-otherwise. `gpt-realtime-whisper` is rejected outright: it has no server-side endpointing and
+otherwise. Setting it `false` is a 422 on every model except `whisper-1`: the batch path
+reports no usage at all, and the other OpenAI STT models are billed per token, so the call
+would transcribe normally and store zero STT spend. `whisper-1` is billed by audio duration,
+which that path measures locally, so it is the one model the pairing is safe for. A row stored
+before this gate existed is forced back to streaming at call time, with a warning in the worker
+log — a stored config must not start failing calls over a metric. `gpt-realtime-whisper` is rejected outright: it has no server-side endpointing and
 the plugin then demands a `livekit-plugins-silero` VAD instance, which this runtime does not
 ship (the session's VAD is `inference.VAD` from `livekit-local-inference` and cannot be handed
 to an STT plugin). Selecting it aborts the job with a logged error rather than crashing at
@@ -366,7 +378,7 @@ flat `UsageRecord` fields:
 | `llm_input_cached_*`, `llm_input_cache_creation_tokens` | all modes, whenever the provider reports a cache hit |
 | `tts_characters_count`, `tts_audio_duration` | `pipeline`, `cascade` |
 | `tts_input_tokens`, `tts_output_tokens` | token-billed TTS only |
-| `stt_provider`, `stt_model`, `stt_audio_duration` | `cascade`, plus `pipeline` when the Sarvam tap runs (self-measured — see [Usage accounting](../reference/usage-accounting.md)) |
+| `stt_provider`, `stt_model`, `stt_audio_duration` | `cascade`, plus `pipeline` when the Sarvam tap runs. Sarvam is self-measured in **both** modes; the other cascade providers report their own. See [Usage accounting](../reference/usage-accounting.md) |
 | `stt_input_tokens`, `stt_output_tokens` | token-billed STT: `openai` in `cascade`, and the Realtime API's own ASR in `pipeline` / `realtime` |
 | `stt_input_audio_tokens`, `stt_input_text_tokens` | subsets of `stt_input_tokens`, reported by the Realtime API's ASR only |
 | `model_usage`, `usage_schema_version`, `sdk_version` | all modes |

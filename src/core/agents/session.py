@@ -45,6 +45,7 @@ from src.core.model_support.capabilities import (
 from src.core.agents.tts import create_tts, maintain_sarvam_connection
 from src.core.agents.stt import (
     NATIVE_TRANSCRIBE_MODEL,
+    CascadeSttUsage,
     FinalCoalescer,
     MeteredRealtimeModel,
     NativeSttUsage,
@@ -420,13 +421,19 @@ async def entrypoint(ctx: JobContext):
     async def _persist_usage(final: bool = True):
         nonlocal _last_usage_written
         try:
-            # Two transcription paths run outside the AgentSession, so neither reaches its
-            # collector: the Sarvam tap, and the ASR the OpenAI Realtime API bills separately
-            # from the realtime model. Both hand in entries shaped like the SDK's own.
+            # Three transcription paths the AgentSession's collector does not get right, each
+            # handing in an entry shaped like the SDK's own. Two run outside the session
+            # entirely — the Sarvam tap, and the ASR the OpenAI Realtime API bills separately
+            # from the realtime model. The third, cascade Sarvam, runs *inside* it, and its
+            # plugin entry is deliberately suppressed because the duration it reports comes
+            # from a server field that is often missing (see stt/cascade_usage.py).
             _native_entry = _native_usage.to_model_usage()
+            _cascade_stt_entry = _cascade_stt_usage.to_model_usage()
             _extra = [_sarvam_usage.to_model_usage()] if _use_sarvam_stt else []
             if _native_entry is not None:
                 _extra.append(_native_entry)
+            if _cascade_stt_entry is not None:
+                _extra.append(_cascade_stt_entry)
             metered = summarize_usage(session, extra_usage=_extra)
             telephony_provider = job_metadata.get("call_service") or job_metadata.get("service")
             if job_metadata.get("call_type") == "web":
@@ -501,6 +508,9 @@ async def entrypoint(ctx: JobContext):
     # Same, for the transcription the OpenAI Realtime API runs and bills separately. Stays
     # empty in cascade, in Gemini realtime, and whenever the Sarvam tap replaces it.
     _native_usage = NativeSttUsage(model=NATIVE_TRANSCRIBE_MODEL)
+    # Same again, for the cascade STT stage. Filled by DynamicAssistant.stt_node, claimed by
+    # create_stt only for a provider whose own reporting cannot be trusted.
+    _cascade_stt_usage = CascadeSttUsage()
     # Last snapshot _persist_usage actually wrote, so an idle call stops rewriting the same
     # numbers every USAGE_FLUSH_INTERVAL_S.
     _last_usage_written: dict | None = None
@@ -693,6 +703,7 @@ async def entrypoint(ctx: JobContext):
         instructions=assistant.assistant_prompt,
         start_instruction=assistant.assistant_start_instruction or "Greet the user Professionally",
         tools=tools,
+        stt_usage=_cascade_stt_usage,
     )
 
     # LLM vendor is orthogonal to mode. `is_realtime` = model speaks its own audio
@@ -758,7 +769,7 @@ async def entrypoint(ctx: JobContext):
         if llm is None:
             return
         if not is_text_only:
-            cascade_stt = create_stt(assistant)
+            cascade_stt = create_stt(assistant, usage=_cascade_stt_usage)
             if cascade_stt is None:
                 return
         logger.info(

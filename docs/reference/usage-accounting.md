@@ -44,7 +44,7 @@ correctly from those columns alone.
   },
   {
     "type": "tts_usage",
-    "provider": "cartesia",
+    "provider": "Cartesia",
     "model": "sonic-3",
     "characters_count": 485,
     "audio_duration": 32.5
@@ -53,6 +53,14 @@ correctly from those columns alone.
 ```
 
 Every key is present even when zero, so a missing key means a schema change, never a zero.
+
+**`provider` is whatever the plugin calls itself, and is not normalized.** Expect vendor
+casing — `"Cartesia"`, `"Deepgram"`, `"ElevenLabs"` — and, for the OpenAI STT plugin, a
+hostname: it returns the client's base URL netloc, so a cascade OpenAI STT entry reads
+`"api.openai.com"`. The two entries this runtime builds itself are the exception and are
+lowercase by construction: `"sarvam"` for both Sarvam STT paths and `"openai"` for the
+Realtime API's own ASR. Anything keying on `(provider, model)` has to match
+case-insensitively, or map these before it looks a rate up.
 Entries are limited to the billable components — `llm_usage`, `tts_usage`, `stt_usage`. The
 SDK also reports `eot_usage` for the turn detector; this deployment runs
 `inference.TurnDetector(version="v1-mini")` locally, so it costs nothing and is not stored.
@@ -83,10 +91,32 @@ cache writes and reports `0`.
 |---|---|---|---|
 | LLM tokens, including cached | yes | yes | yes |
 | Modality split (audio/text/image) | text only | yes | yes |
-| TTS characters or tokens | yes | yes | not applicable — the model speaks |
-| STT | yes | yes — the Sarvam tap (self-measured) or the Realtime API's own ASR | yes on OpenAI; **never** on Gemini, which reports none |
+| TTS characters and audio duration | yes | yes | not applicable — the model speaks |
+| TTS tokens | never — see below | never | not applicable |
+| STT | yes — Sarvam self-measured, the other four provider-reported | yes — the Sarvam tap (self-measured) or the Realtime API's own ASR | yes on OpenAI; **never** on Gemini, which reports none |
 
-## Pipeline-mode STT is measured, not reported
+`tts_input_tokens` and `tts_output_tokens` are always `0`, on every provider this platform
+can configure. The fields exist because `TTSModelUsage` carries them, but the SDK only fills
+them when a plugin calls `_set_token_usage`, and the sole plugin that does is OpenAI's TTS,
+which `create_tts` never builds. Cartesia, Sarvam, ElevenLabs and Mistral are all billed by
+character or by audio. Read `tts_characters_count` and `tts_audio_duration`; a zero in the
+token fields means "not how this vendor bills", not "nothing was spoken".
+
+`tts_characters_count` is exact for Cartesia and Sarvam, which stream. ElevenLabs and Mistral
+are non-streaming and the SDK wraps them in a `StreamAdapter` that splits the reply into
+sentences and synthesizes each one, so their count is the sum of the sentence lengths and can
+read slightly below the string the assistant actually spoke.
+
+## Sarvam STT is measured, not reported
+
+This applies to both modes that can run Sarvam, for the same reason: the plugin's own
+`RECOGNITION_USAGE` event carries whatever the server put in `metrics.audio_duration`. That
+field is absent on some responses and defaults to `0.0`, and the plugin emits no event at all
+for a turn whose transcript came back empty (`plugins/sarvam/stt.py:1568-1571`). Either way
+the call would store a silent zero — indistinguishable from "no transcription ran", which is
+the exact failure this accounting exists to remove. So the runtime counts the audio itself.
+
+### Pipeline mode
 
 `pipeline` mode transcribes on a parallel Sarvam tap
 (`src/core/agents/stt/sarvam_parallel.py`) that builds its own plugin STT and never hands it
@@ -97,15 +127,43 @@ would have produced. It reaches both `stt_audio_duration` and the raw `model_usa
 
 Two consequences worth knowing before pricing off it:
 
-- The number is what the tap **sent**, not what Sarvam reported back. Sarvam's own
-  `RECOGNITION_USAGE` event carries whatever the server put in `metrics.audio_duration`,
-  which is absent on some responses; reading it would have recorded a silent zero. Expect a
-  small difference from the invoice, never a false zero.
+- The number is what the tap **sent**, not what Sarvam reported back. Expect a small
+  difference from the invoice, never a false zero.
 - It is stream time, not speech time. `SpeechGate` zeroes non-speech samples in place and
   returns the same frame, so gated audio still goes to Sarvam and is still counted — which
   matches how a continuously open connection is metered.
 - The 2 s of silence the tap feeds Sarvam at hangup (`DRAIN_SILENCE_S`, so the caller's last
   sentence comes back) is pushed on a different path and is not counted.
+
+### Cascade mode
+
+Cascade puts the STT on the `AgentSession` as a real stage, so unlike the tap its usage does
+reach the SDK's collector — with the wrong number in it. Two pieces fix that
+(`src/core/agents/stt/cascade_usage.py`):
+
+- `DynamicAssistant.stt_node` sums the duration of every frame the session hands the STT
+  stage. Same measurement as the tap, so the same caveat applies: stream time, including
+  frames `SpeechGate` muted.
+- `MeteredSarvamSTT` drops the plugin's own `metrics_collected` before it reaches the
+  collector. It has to be dropped rather than zeroed: the collector creates an `stt_usage`
+  entry from the first metric it sees, and `summarize_usage` sums every entry, so a zeroed
+  one would sit beside the measured one and the record would report the audio twice.
+
+The other four cascade providers are left alone. Cartesia, Deepgram and ElevenLabs count
+frames themselves, and OpenAI is the only STT provider that reports billing **tokens** —
+suppressing it would destroy the number the call is actually billed on.
+
+One known shortfall, upstream and bounded: Deepgram `flux-general-*` and ElevenLabs flush
+their usage collector every 5 s and never flush it again when the stream closes, so up to 5 s
+per stream goes uncounted. Deepgram's `nova-*` family does flush, and additionally tops the
+figure up with the connection's wall-clock lifetime. The shortfall is an undercount with a
+known ceiling, always in the operator's favour, and never a zero — which is why it is
+documented rather than worked around.
+
+OpenAI STT has one configuration that would be unmeasurable, and the API now refuses it:
+`use_realtime: false` takes the batch REST path, which reports no tokens at all. Only
+`whisper-1` may use it, because that model is billed by audio duration and the batch path
+measures duration locally. See [Compatibility](compatibility.md).
 
 ## Realtime transcription is billed separately from the realtime model
 

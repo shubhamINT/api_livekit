@@ -171,7 +171,7 @@ don't always agree, see the quirks below.
 | `cartesia` | `cascade` only | `ink-whisper` (43 languages) or `ink-2` (English only) | `language` fixed ISO 639-1, no auto-detect, default `en` |
 | `deepgram` | `cascade` only | `nova-3` (multilingual, 45 languages); also `nova-2`, `flux-general-en` (English), `flux-general-multi` | `language` BCP-47 or `multi` (auto-detect; omitted — `multi` on `nova-3` / `flux-general-multi`, `en-US` on the rest); `enable_diarization` (bool, default `false` — omitted stays **off**, never force-enabled); `keyterm` (string or list — omitted — not sent, no biasing); `api_key` falls back to system `DEEPGRAM_API_KEY` |
 | `elevenlabs` | `cascade` only | `scribe_v2_realtime` (auto-detects ~190 languages); also `scribe_v2`, `scribe_v1` | `language_code` **ISO 639-3** (`eng`, `hin`) — omit to auto-detect; `no_verbatim` (bool, default `false` — omitted keeps fillers); `api_key` falls back to system `ELEVENLABS_API_KEY` — the same variable the ElevenLabs TTS provider uses |
-| `openai` | `cascade` only (in `pipeline` it collapses to `native`) | `gpt-4o-mini-transcribe`; also `gpt-4o-transcribe`, `whisper-1` | `language` ISO 639-1 — omitting it turns on `detect_language` rather than pinning English; `detect_language` (bool, default `false`) turns on auto-detect and overrides `language`; `prompt` (whisper-1 only); `noise_reduction_type` (`near_field` / `far_field`); `use_realtime` (bool, default **`true`** — streams over the realtime transcription socket); `api_key` falls back to system `OPENAI_API_KEY` — the same variable the cascade LLM uses |
+| `openai` | `cascade` only (in `pipeline` it collapses to `native`) | `gpt-4o-mini-transcribe`; also `gpt-4o-transcribe`, `whisper-1` | `language` ISO 639-1 — omitting it turns on `detect_language` rather than pinning English; `detect_language` (bool, default `false`) turns on auto-detect and overrides `language`; `prompt` (whisper-1 only); `noise_reduction_type` (`near_field` / `far_field`); `use_realtime` (bool, default **`true`** — streams over the realtime transcription socket; `false` is accepted only with `whisper-1`); `api_key` falls back to system `OPENAI_API_KEY` — the same variable the cascade LLM uses |
 | `native` | `pipeline` only — rejected in `cascade` (no realtime model to self-transcribe) | n/a (the conversational LLM transcribes itself: `gpt-4o-mini-transcribe`) | no config |
 
 Ignored entirely in `realtime` mode (the model always transcribes itself).
@@ -225,7 +225,7 @@ provider (cartesia / deepgram / elevenlabs) degrades to native transcription wit
 | `openai` | `detect_language` | `false` | auto-detect the spoken language | `true` blanks `language` and lets the model detect; omitted keeps the pinned language |
 | `openai` | `prompt` | not sent | biases spellings/jargon (names, product terms) | a string biases recognition on **`whisper-1` only**; the gpt-4o transcribe models ignore it |
 | `openai` | `noise_reduction_type` | not sent | server-side noise reduction | `near_field` (headset) or `far_field` (speakerphone / room mic); omitted sends none |
-| `openai` | `use_realtime` | `true` | streams over OpenAI's realtime transcription WebSocket (interim results, low latency) | `false` switches to the batch REST API — cheaper, but adds a full utterance of latency per turn and gives no interim results. **This inverts the plugin's own default**, which is batch |
+| `openai` | `use_realtime` | `true` | streams over OpenAI's realtime transcription WebSocket (interim results, low latency) | `false` switches to the batch REST API — cheaper, but adds a full utterance of latency per turn, gives no interim results, and is **rejected for every model except `whisper-1`** because that path reports no token usage. **This inverts the plugin's own default**, which is batch |
 | `openai` | `api_key` | system `OPENAI_API_KEY` | auth — the same variable the cascade LLM stage uses | override wins; both missing → **cascade** aborts (in pipeline the provider is already collapsed to `native`) |
 
 `native` (pipeline only) takes no config — the conversational LLM transcribes itself
@@ -293,9 +293,12 @@ These are the easy-to-miss traps. All statements match the plugin behaviour in L
 - **OpenAI STT: `prompt` only works on `whisper-1`.** The `gpt-4o-transcribe` family accepts the
   field and ignores it — no error, no biasing. If you need prompt biasing, pick `whisper-1` (and
   accept that it is the slower, batch-only model).
-- **OpenAI STT: `use_realtime: false` is a latency decision, not a cosmetic one.** Batch mode holds
-  each utterance until it ends, then transcribes it in one HTTP call — no interim results, and the
-  turn-taking pipeline waits. Only switch it off when cost beats responsiveness.
+- **OpenAI STT: `use_realtime: false` is accepted only for `whisper-1`.** Batch mode holds each
+  utterance until it ends, then transcribes it in one HTTP call — no interim results, the
+  turn-taking pipeline waits, and the response carries no usage at all. The other OpenAI STT
+  models are billed per token, so batch mode would store zero STT spend for the call; that
+  pairing is a 422. `whisper-1` is billed by audio duration, which the batch path measures
+  locally, so it is the one model that may use it.
 - **OpenAI STT: `detect_language` beats `language`.** Setting both is not an error — `language` is
   simply dropped. Pick one.
 - **Multilingual billing.** Deepgram `language: "multi"` (and any multilingual detection) is billed at a higher per-minute rate than monolingual. Factor this in before enabling it broadly.

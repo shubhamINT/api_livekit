@@ -54,12 +54,14 @@ installed `livekit-agents` 1.6.7, on 2026-09-04:
 ## Doing now
 
 Nothing. PR 0 through PR 4 have all landed, PR 5 turned out to be empty (every test and doc it
-listed shipped inside the PR that needed it), and PR 6 has closed the launch-path follow-up
-PR 0 left behind.
+listed shipped inside the PR that needed it), PR 6 closed the launch-path follow-up PR 0 left
+behind, and PR 7 closed the last measurement gap — found by auditing every configurable
+provider against the installed plugins rather than assuming the goal was met because the PRs
+were done.
 
 Still outstanding, all needing a real deployment: the PR 0 manual verification (one inbound
 Exotel call and one cascade call — audio both ways, transcript, usage record) and the PR 1 /
-PR 2 / PR 3 / PR 4 / PR 6 verification described in their sections below.
+PR 2 / PR 3 / PR 4 / PR 6 / PR 7 verification described in their sections below.
 
 ## Done
 
@@ -338,6 +340,105 @@ Manual, needs a deployment:
   doubles as the PR 0 through PR 4 verification still outstanding above.
 - `docker logs` on the agent container shows no `DeprecationWarning` about the built-in CLI.
 
+**PR 7 — cascade Sarvam STT is measured, not reported.** With PR 6 landed the tracking file
+held only a developer-setup item and out-of-scope pricing, so every configurable provider was
+audited against the installed plugins to check the goal actually held.
+
+TTS came back clean. Every TTS metric is computed by the SDK base classes from the text pushed
+and the frames decoded (`agents/tts/tts.py:326-367` chunked, `:683-726` streaming), never from a
+provider response — including for the two TTS classes written in this repo
+(`src/services/elevenlabs/v3_nonstream.py`, `src/services/mistral/tts.py`), which subclass
+`tts.ChunkedStream` and inherit it. Two documentation claims were wrong and are fixed:
+`tts_input_tokens` / `tts_output_tokens` are structurally always `0` for every provider this
+platform can build (only `plugins/openai/tts.py:319` calls `_set_token_usage`, and `create_tts`
+never constructs `openai.TTS`), and for ElevenLabs and Mistral the character count is the sum of
+tokenized sentence lengths, because the SDK wraps both non-streaming classes in a
+`StreamAdapter` that synthesizes sentence by sentence.
+
+Cascade Sarvam STT carried the exact defect PR 2 removed from pipeline mode. `create_stt`
+handed `AgentSession` a raw `sarvam.STT`, whose only usage source is
+`metrics.get("audio_duration", 0.0)` off the transcript payload
+(`plugins/sarvam/stt.py:1574-1587`) — a server field absent on some responses, with no local
+frame accounting anywhere in that file — and which emits no usage event at all when the
+transcript came back empty (`stt.py:1568-1571`).
+
+`src/core/agents/stt/cascade_usage.py` holds the fix: `CascadeSttUsage` (the tally) and
+`MeteredSarvamSTT`. `DynamicAssistant.stt_node` sums every frame the session hands the STT
+stage, and the entry reaches `summarize_usage` through the same `extra_usage` list PR 2 and PR 3
+already use.
+
+The design decisions worth keeping:
+
+- **The plugin's metric is dropped, not zeroed.** Cascade STT lives *inside* the
+  `AgentSession`, unlike the pipeline tap, so its entry already reaches the collector. The
+  collector creates an `stt_usage` entry from the first metric it sees and `summarize_usage`
+  sums every entry, so a zeroed metric would leave a second row beside ours and the record would
+  report the audio twice. `tests/test_cascade_config.py::TestSummarizeUsage` asserts both the
+  single-entry result and the doubling it prevents.
+- **The suppression is on `emit`, because there is no seam before the monitor.**
+  `RecognizeStream.__init__` tees its event channel and starts `_metrics_monitor_task` at
+  construction (`agents/stt/stt.py:384-388`), so anything wrapping the object `stream()` returns
+  sees the event only after `STTMetrics` was built. The monitor reports by calling
+  `self._stt.emit("metrics_collected", ...)` (`stt.py:540`), and `emit` is public
+  `rtc.EventEmitter` — the same preference for a public seam that PR 3 followed.
+- **Rejected: rewriting `audio_duration` on the emitted metric.** It leaks the tail. The rewrite
+  only fires when the plugin emits, which needs a non-empty transcript, so a quiet final minute
+  reports nothing. Recovering it needs a flush at stream close, and `_flush_and_end_call` never
+  calls `session.aclose()` before `_persist_usage`, so that flush would land after the
+  authoritative write — and PR 4's 15 s snapshots need the number readable at arbitrary instants
+  regardless. A running tally satisfies both.
+- **Counting in `stt_node`, not in the STT object.** `Agent.stt_node` is a documented override
+  that receives every frame; the frames only reach a `RecognizeStream` through SDK-private
+  plumbing. The cost: overriding it disables STT-pipeline reuse across agent handoffs
+  (`agents/voice/agent_activity.py:917-918` gates reuse on
+  `type(agent).stt_node is Agent.stt_node`). This runtime calls `session.start` once and never
+  hands off, so that is free today — recorded in the code so the coupling is not a surprise.
+
+**Only Sarvam is wrapped** *(decided with the user after the audit)*. Cartesia and deepgram
+`nova-*` count frames themselves, and nova additionally tops its figure up with the connection's
+wall-clock lifetime (`plugins/deepgram/stt.py:713-727`) — closer to Deepgram's invoice than a
+frame count would be, so replacing it would make the number worse. `openai` is the only STT
+provider that reports billing tokens and must not be suppressed at all. Deepgram
+`flux-general-*` and elevenlabs flush their 5 s usage collector but never flush again at stream
+close, losing up to 5 s per stream; that is an undercount with a known ceiling, in the
+operator's favour, and never zero — documented rather than worked around.
+
+**`MeteredSarvamSTT.provider` returns `"sarvam"` lowercase**, where the stock plugin returns
+`"Sarvam"` and the pipeline tap already stored `"sarvam"`. Pricing keys on `(provider, model)`
+and should not need two spellings for one vendor. This is a change to stored data shape, so the
+docs now also state the general rule: `provider` in `model_usage` is whatever the plugin calls
+itself and is not normalized — vendor casing for cartesia/deepgram/elevenlabs, and a *hostname*
+for the OpenAI STT plugin, which returns its client's base-URL netloc
+(`plugins/openai/stt.py:333-334`). The reference page's example JSON showed a lowercase
+`"cartesia"` that no real record contains; that is corrected.
+
+**OpenAI `use_realtime: false` is now a 422, except on `whisper-1`** *(decided with the user)*.
+The batch REST path discards the server's usage entirely, and every OpenAI STT model but
+`whisper-1` is billed per token — such a call transcribes normally and stores zero STT spend.
+`whisper-1` is duration-billed and the batch path computes duration locally, so it is the one
+model the pairing is safe for; a blanket block would have been wrong. `OPENAI_STT_DURATION_BILLED_MODELS`
+lives in `src/core/model_support/speech.py` so the API validator and `create_stt` read one list,
+and the runtime side warns and forces streaming rather than refusing — a stored row must not
+start failing calls over a metric.
+
+`usage_schema_version` stays `2`: nothing about *what* is measured changed.
+
+Gates: 514 tests OK, `mkdocs build --strict` clean, 15 Mermaid diagrams parse, ruff on the
+touched files reports only pre-existing violations.
+
+Manual, needs a deployment:
+
+- One cascade call with `assistant_stt_model` unset or `sarvam` → `stt_provider == "sarvam"`,
+  `stt_audio_duration` ≈ the caller's stream time, and **exactly one** `stt_usage` entry in
+  `model_usage`, with lowercase `"provider": "sarvam"`.
+- The same call queried at ~20 s → the snapshot already carries a growing non-zero
+  `stt_audio_duration`.
+- A cascade call where the caller says nothing intelligible → non-zero `stt_audio_duration`,
+  where the old code stored `0`.
+- One cascade cartesia call and one deepgram nova call → unchanged, one `stt_usage` entry each,
+  providers still `"Cartesia"` / `"Deepgram"`.
+- One pipeline call and one realtime call → identical to PR 2 / PR 3 behaviour.
+
 ## Left
 
 **PR 5 — closed, nothing left to do.** Every item shipped inside the PR that needed it: the
@@ -346,6 +447,14 @@ field-level tests in `TestSummarizeUsage`, the per-mode coverage (PR 2
 `tests/test_native_stt_usage.py`, PR 4 `tests/test_cascade_config.py::TestUpsertUsageRecord`),
 the reference page `docs/reference/usage-accounting.md` — whose "Known gaps" section PR 3
 emptied — and the troubleshooting rows.
+
+**Follow-up left by PR 7 — normalizing `provider` in `model_usage`.**
+
+Only the two entries this runtime builds itself are lowercase. The rest carry whatever the
+plugin calls itself, and the OpenAI STT plugin carries a hostname. Pricing will have to map
+these; whether that mapping lives in the pricing package or in `summarize_usage` is a decision
+for whoever builds it. Documented rather than changed here, because rewriting a provider string
+at write time makes stored rows disagree with the SDK that produced them.
 
 **Follow-up left by PR 6 — the developer `dev` command.**
 

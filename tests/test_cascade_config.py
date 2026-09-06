@@ -21,11 +21,17 @@ from livekit.agents.metrics.usage import (
     STTModelUsage,
     TTSModelUsage,
 )
+from livekit.plugins import sarvam as sarvam_plugin
 from livekit.plugins.sarvam.stt import MODEL_CONFIGS as SARVAM_MODEL_CONFIGS
 
 from src.api.models.api_schemas import CreateAssistant, UpdateAssistant
 from src.core.agents.llm import create_llm
-from src.core.agents.stt import NativeSttModelUsage, create_stt
+from src.core.agents.stt import (
+    CascadeSttUsage,
+    MeteredSarvamSTT,
+    NativeSttModelUsage,
+    create_stt,
+)
 from src.core.agents import usage as usage_module
 from src.core.agents.usage import summarize_usage, upsert_usage_record
 from src.core.db.db_schemas import UsageRecord
@@ -101,6 +107,43 @@ class TestCreateSTT(unittest.TestCase):
         self.assertEqual(stt._opts.model, "saaras:v4")
         self.assertEqual(stt._opts.language, "hi-IN")
         self.assertEqual(stt._opts.mode, "transcribe")
+
+    def test_sarvam_is_wrapped_so_the_session_measures_it(self):
+        """Sarvam's own RECOGNITION_USAGE carries a server field that is missing on some
+        responses, so the wrapper replaces it. The wrapper must still be a sarvam.STT with
+        the same options — it changes reporting, not transcription."""
+        tally = CascadeSttUsage()
+        stt = create_stt(
+            make_assistant(
+                assistant_stt_model="sarvam",
+                assistant_stt_config={"api_key": "k", "model": "saaras:v4"},
+            ),
+            usage=tally,
+        )
+        self.assertIsInstance(stt, MeteredSarvamSTT)
+        self.assertIsInstance(stt, sarvam_plugin.STT)
+        self.assertEqual(stt._opts.model, "saaras:v4")
+        self.assertEqual((tally.provider, tally.model), ("sarvam", "saaras:v4"))
+
+    def test_other_providers_leave_the_tally_unclaimed(self):
+        """Cartesia, deepgram and elevenlabs count frames themselves and openai reports
+        billing tokens, so the session's tally must not add a second entry for them."""
+        for model, config in (
+            ("cartesia", {"api_key": "k"}),
+            ("deepgram", {"api_key": "k"}),
+            ("elevenlabs", {"api_key": "k"}),
+            ("openai", {"api_key": "k"}),
+        ):
+            with self.subTest(model=model):
+                tally = CascadeSttUsage()
+                create_stt(
+                    make_assistant(
+                        assistant_stt_model=model, assistant_stt_config=config
+                    ),
+                    usage=tally,
+                )
+                self.assertEqual(tally.provider, "")
+                self.assertIsNone(tally.to_model_usage())
 
     def test_cartesia_model_is_pinned_not_defaulted(self):
         """The plugin default flipped to the English-only ink-2 in 1.5.15, so the
@@ -444,8 +487,22 @@ class TestOpenAISTT(unittest.TestCase):
         self.assertTrue(stt.capabilities.streaming)
         self.assertTrue(stt.capabilities.interim_results)
 
-    def test_use_realtime_false_falls_back_to_batch(self):
-        self.assertFalse(self._stt(use_realtime=False).capabilities.streaming)
+    def test_use_realtime_false_is_overridden_for_a_token_billed_model(self):
+        """A row stored before the API gate existed must not take the batch path.
+
+        That path reports no token usage at all, and every OpenAI STT model except whisper-1
+        is billed per token — the call would transcribe fine and record zero STT spend. The
+        runtime forces streaming rather than refusing: a stored config cannot start failing
+        calls over a metric.
+        """
+        with self.assertLogs("app", level="WARNING") as logs:
+            stt = self._stt(model="gpt-4o-mini-transcribe", use_realtime=False)
+        self.assertTrue(stt.capabilities.streaming)
+        self.assertIn("use_realtime=false", "\n".join(logs.output))
+
+    def test_use_realtime_false_is_honoured_for_whisper(self):
+        """whisper-1 is billed by audio duration, which the batch path measures locally."""
+        self.assertFalse(self._stt(model="whisper-1", use_realtime=False).capabilities.streaming)
 
     def test_unpinned_autodetects(self):
         """Contract change: unpinned used to mean preferred_languages[0], then a hardcoded
@@ -791,6 +848,26 @@ class TestCascadeSchemaRules(unittest.TestCase):
         )
         self.assertEqual(request.assistant_stt_config.type, "cartesia")
         self.assertEqual(request.assistant_stt_config.language, "hi")
+
+    def test_cascade_rejects_batch_openai_stt_on_a_token_billed_model(self):
+        """The batch transcription API reports no token usage, and every OpenAI STT model
+        but whisper-1 is billed per token — the call would store zero STT spend."""
+        with self.assertRaises(ValidationError) as caught:
+            CreateAssistant(
+                **self.BASE,
+                assistant_stt_model="openai",
+                assistant_stt_config={"model": "gpt-4o-mini-transcribe", "use_realtime": False},
+            )
+        self.assertIn("whisper-1", str(caught.exception))
+
+    def test_cascade_accepts_batch_openai_stt_on_whisper(self):
+        """whisper-1 is billed by audio duration, which the batch path measures locally."""
+        request = CreateAssistant(
+            **self.BASE,
+            assistant_stt_model="openai",
+            assistant_stt_config={"model": "whisper-1", "use_realtime": False},
+        )
+        self.assertFalse(request.assistant_stt_config.use_realtime)
 
     def test_cascade_accepts_deepgram_stt(self):
         request = CreateAssistant(
@@ -1623,6 +1700,32 @@ class TestSummarizeUsage(unittest.TestCase):
                 ),
             ]
         )
+
+    def test_cascade_sarvam_contributes_exactly_one_stt_entry(self):
+        """MeteredSarvamSTT suppresses the plugin's own metrics, so the session's collector
+        holds no sarvam entry and the tally supplies the only one."""
+        session = SimpleNamespace(usage=AgentSessionUsage(model_usage=[]))
+        tally = CascadeSttUsage(provider="sarvam", model="saaras:v3", audio_duration=42.0)
+        metered = summarize_usage(session, extra_usage=[tally.to_model_usage()])
+        stt_entries = [e for e in metered["model_usage"] if e["type"] == "stt_usage"]
+        self.assertEqual(len(stt_entries), 1)
+        self.assertEqual(stt_entries[0]["provider"], "sarvam")
+        self.assertEqual(metered["stt_audio_duration"], 42.0)
+
+    def test_a_surviving_plugin_entry_would_double_the_duration(self):
+        """Why the plugin's metrics are dropped rather than zeroed: the collector creates an
+        entry from the first metric it sees, and summarize_usage sums every stt entry. This
+        is the regression the suppression exists to prevent."""
+        session = SimpleNamespace(
+            usage=AgentSessionUsage(
+                model_usage=[
+                    STTModelUsage(provider="sarvam", model="saaras:v3", audio_duration=42.0)
+                ]
+            )
+        )
+        tally = CascadeSttUsage(provider="sarvam", model="saaras:v3", audio_duration=42.0)
+        metered = summarize_usage(session, extra_usage=[tally.to_model_usage()])
+        self.assertEqual(metered["stt_audio_duration"], 84.0)
 
     def test_sums_across_entries_per_component(self):
         metered = summarize_usage(SimpleNamespace(usage=self._usage()))

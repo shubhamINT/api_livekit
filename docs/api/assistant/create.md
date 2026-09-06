@@ -277,7 +277,7 @@ For the full model/provider inventory (model IDs, defaults, per-mode validity) s
         | `detect_language` | boolean | No | Auto-detect the spoken language instead of pinning one. Default: `false`. Overrides `language`. |
         | `prompt` | string | No | Biases spellings and jargon (names, product terms). **`whisper-1` only** — the gpt-4o transcribe models accept and ignore it. |
         | `noise_reduction_type` | string | No | Server-side noise reduction: `near_field` (headset) or `far_field` (speakerphone / room mic). Omitted applies none. |
-        | `use_realtime` | boolean | No | Streams over OpenAI's realtime transcription WebSocket (interim results, low latency). Default: `true`. Set `false` for the batch REST API — cheaper, but adds a full utterance of latency per turn. |
+        | `use_realtime` | boolean | No | Streams over OpenAI's realtime transcription WebSocket (interim results, low latency). Default: `true`. Set `false` for the batch REST API — cheaper, but adds a full utterance of latency per turn, and accepted **only with `model: "whisper-1"`**: the batch path reports no token usage, so a token-billed model on it would record zero STT spend for the call. |
         | `api_key` | string | No | Optional OpenAI key for the STT stage. Falls back to system `OPENAI_API_KEY`, the same variable the cascade LLM stage uses. |
 
     > **Don't assume all STT providers auto-detect when `language`/`language_code` is omitted.**

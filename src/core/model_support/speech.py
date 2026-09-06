@@ -103,6 +103,12 @@ OPENAI_STT_MODELS = frozenset(
     }
 )
 
+# The OpenAI STT models billed by audio duration rather than by token. Everything else in
+# OPENAI_STT_MODELS is token-billed, and the plugin's batch REST path (use_realtime=false)
+# reports no tokens at all — so pairing a token-billed model with it stores a record that
+# prices to zero. Only these models may take that path; see OpenAISTTConfig.use_realtime.
+OPENAI_STT_DURATION_BILLED_MODELS = frozenset({"whisper-1"})
+
 # ── TTS ───────────────────────────────────────────────────────────────────────────────
 # livekit.plugins.elevenlabs.models.TTSModels. eleven_v3 is the platform default. It and
 # eleven_v3_conversational are the two with no `speed` control — see agents/tts/factory.py,

@@ -13,4 +13,4 @@ edit the plan before writing the code.
 
 | Effort | File | Status |
 |---|---|---|
-| Complete per-call token and usage accounting | [usage-accounting.md](usage-accounting.md) | In progress |
+| Complete per-call token and usage accounting | [usage-accounting.md](usage-accounting.md) | Done — goal met at PR 7; follow-ups listed in the file |
