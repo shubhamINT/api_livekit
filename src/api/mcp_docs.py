@@ -102,10 +102,14 @@ mcp = MCPServer(
     title="LiveKit Agents API Documentation",
     instructions=(
         "Documentation for the LiveKit Agents voice-AI REST API: assistants, "
-        "outbound/inbound calls, SIP trunks, tools, audio library, analytics and "
-        "webhooks. Call search_docs with the user's question to find relevant "
-        "pages, then get_doc to read one in full. Answer only from what these "
-        "tools return — never guess endpoint paths, field names or payload shapes."
+        "outbound/inbound calls, SIP trunks, tools, audio library, analytics, "
+        "webhooks, releases, migrations, compatibility, usage accounting, and "
+        "container deployment. Call search_docs with the user's question, then "
+        "get_doc on the most specific API or reference page. Use changelog.md for "
+        "release and breaking-change context. Answer only from what these tools "
+        "return — never guess endpoint paths, field names, model IDs, defaults, "
+        "prices, provider capabilities, or deployment-specific facts. State when "
+        "a field is nullable, a value is versioned, or a cost is only an estimate."
     ),
     version=__version__,
 )

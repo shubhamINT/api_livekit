@@ -8,7 +8,103 @@ The minor version goes up whenever behaviour changes in a way an operator has to
 Given how this platform is used, that includes anything that changes **what a caller hears**.
 
 !!! warning "Read the breaking changes before upgrading"
-    Both releases below contain breaking changes. Each one lists what to do about it.
+    Releases below contain breaking changes. Each one lists what to do about it.
+
+---
+
+## 1.3.0
+
+Usage observability and deployment-maintenance release. This release keeps the call behavior and
+provider integrations documented in 1.2.0, but changes usage payloads, usage attribution, pricing
+visibility, and the supported worker launch path.
+
+### Usage and pricing are now available in assistant call logs
+
+`GET /assistant/call-logs/{assistant_id}` now includes a nested `usage` object for each call when a
+usage record exists. The object includes flat totals, per-provider/model `model_usage`, estimated
+provider cost, pricing completeness, and the `usage_finalized` state. The endpoint remains
+backward-compatible at the HTTP level, but clients that deserialize a fixed response schema must
+allow the new fields and the nullable `usage` object.
+
+The same usage contract is available through the per-call usage endpoint, end-call webhook, and
+analytics endpoints. The canonical field definitions are in [Usage accounting](reference/usage-accounting.md)
+and [Assistant call logs](api/assistant/logs.md).
+
+### Per-model usage attribution
+
+New usage records retain one entry per billable `(provider, model)` pair in `model_usage`. This
+prevents a call that changes models from losing attribution behind a blended total. Provider names
+are normalized to lowercase billing keys at write time; OpenAI hostnames normalize to `openai`.
+
+New records use `usage_schema_version=3`. Existing version 2 records retain their old provider
+spellings until the explicit migration is run:
+
+```bash
+uv run python scripts/normalize_model_usage_providers.py
+uv run python scripts/normalize_model_usage_providers.py --apply
+```
+
+The migration changes only version 2 usage records and sets them to version 3. Version 1 records
+were written before per-model attribution existed and cannot be reconstructed from stored data.
+
+### Estimated provider cost
+
+New usage records expose `estimated_cost_usd`, `pricing_schema_version`, `pricing_complete`, and
+`unpriced_model_usage`. These are estimates from versioned public PAYG rates, not invoices. A
+partial estimate is explicit: `pricing_complete=false` and unknown entries appear in
+`unpriced_model_usage`; unknown usage is never silently reported as zero.
+
+### Usage capture is more complete
+
+- Cascade Sarvam STT duration is measured from the audio tap rather than inferred from an absent
+  SDK metric.
+- Pipeline Sarvam STT tap usage is included in the usage record.
+- OpenAI Realtime ASR usage is captured separately from realtime model usage when the provider
+  reports it.
+- SDK-reported token fields are preserved instead of being reduced to only flat totals.
+- Usage snapshots can survive a worker failure before normal teardown. Treat
+  `usage_finalized=false` as an incomplete current snapshot, not as a final bill.
+
+### Worker launch path
+
+Production Docker workers now launch through the supported LiveKit CLI:
+
+```bash
+python -m livekit.agents start agent_run.py
+```
+
+`uv run agent_run.py dev` remains a local development compatibility path and uses the SDK's
+deprecated Python CLI. Production deployments must use the Docker command above.
+
+### Dependency and model alignment
+
+`livekit-agents` is upgraded to `1.7.1`, and provider/model rosters are synchronized with the
+runtime factories and validation tables. Before adding or restoring a model, run
+`uv run python scripts/check_model_allowlist.py`; do not copy a model name from an old release or
+from memory. See [Models & Providers](reference/models.md) and [Compatibility Matrix](reference/compatibility.md).
+
+### Breaking changes and upgrade steps
+
+1. **Usage response shape is additive but not schema-neutral.** Update strict clients to accept
+   `usage: null`, `model_usage`, pricing fields, `usage_schema_version`, and
+   `usage_finalized` in assistant call logs, webhooks, and usage responses.
+2. **Provider attribution is normalized for new records.** Consumers must use normalized provider
+   keys rather than relying on historical plugin spellings. Run the version 2 normalization
+   migration if consistent historical analytics are required.
+3. **Pricing is not an invoice.** Do not use `estimated_cost_usd` as a payment or billing total;
+   check `pricing_complete` before treating it as complete.
+4. **Worker startup command changed in production.** Rebuild the agent image and use
+   `python -m livekit.agents start agent_run.py`; do not use the deprecated Python CLI for
+   production.
+5. **Model validation follows the 1.7.1 roster.** Run the allowlist audit before deployment and
+   repair stored assistants whose model is no longer supported.
+
+### Documentation and MCP
+
+The MkDocs site, `/documentation` endpoint, and read-only `/mcp` server all read the same `docs/`
+source. The MCP server reports version `1.3.0`; agents should use `search_docs` followed by
+`get_doc`, prefer endpoint/reference pages over this historical changelog, and state when a value
+is versioned or only an estimate.
 
 ---
 
