@@ -31,6 +31,9 @@ See [End Call Webhook](webhook.md) for the complete payload contract.
 ### Option 3 — Query Call Logs (by assistant)
 
 Use `GET /assistant/call-logs/{assistant_id}` to look up past and current call records for a specific assistant.
+Each returned log includes a nested `usage` object with token, duration, model,
+pricing, and finalization fields when a usage record exists. A separate usage
+request is not required for assistant-scoped call history.
 
 ```bash
 curl -X GET "https://api-livekit-vyom.indusnettechnologies.com/assistant/call-logs/ASSISTANT_ID?page=1&limit=10" \
@@ -44,7 +47,9 @@ Full query parameters (pagination, date range, sort) are documented in [Call Log
 Use `GET /call/records` to query across all calls for your account — including passthrough calls (which have no assistant).
 
 Use `GET /call/records/{room_name}/usage` to retrieve the complete usage record for one of your
-calls, including per-model attribution.
+calls, including per-model attribution. This remains useful when you already
+have a room name or when querying a cross-assistant call record; assistant
+call-log responses already include the same usage under `logs[].usage`.
 
 ```bash
 # All calls, newest first

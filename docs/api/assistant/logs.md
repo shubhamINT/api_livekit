@@ -1,6 +1,10 @@
 # Get Call Logs
 
-Retrieve call logs for a specific assistant with support for pagination, sorting, and date filtering.
+Retrieve call logs for a specific assistant with support for pagination, sorting, date filtering,
+and per-call AI usage and estimated provider cost.
+
+Each log contains a nested `usage` object. This avoids a second request to
+`GET /call/records/{room_name}/usage` when displaying an assistant's call history.
 
 - **URL**: `/assistant/call-logs/{assistant_id}`
 - **Method**: `GET`
@@ -46,11 +50,39 @@ Retrieve call logs for a specific assistant with support for pagination, sorting
 | `data.logs[].billable_duration_minutes` | integer | Chargeable duration in whole minutes, rounded up for connected calls and `0` for non-connected terminal outcomes. |
 | `data.logs[].recording_path`        | string  | URL/Path to the call recording (if available).           |
 | `data.logs[].transcripts`           | array   | List of transcript objects `{speaker, text, timestamp}`. |
+| `data.logs[].usage`                 | object/null | Usage and estimated AI-provider cost for this call; `null` when no usage row exists. |
 | `data.pagination`                   | object  | Pagination metadata.                                     |
 | `data.pagination.total`             | integer | Total number of call logs matching the query.            |
 | `data.pagination.page`              | integer | Current page number.                                     |
 | `data.pagination.limit`             | integer | Number of items per page.                                |
 | `data.pagination.total_pages`       | integer | Total number of pages available.                         |
+
+### Nested Usage Fields
+
+When `data.logs[].usage` is not `null`, it contains the complete persisted
+`UsageRecord` payload, excluding its database `id`. Important fields include:
+
+| Field | Type | Description |
+| :---- | :--- | :---------- |
+| `usage.room_name` | string | LiveKit room associated with the usage record. |
+| `usage.mode` | string/null | Assistant mode: `pipeline`, `realtime`, or `cascade`. |
+| `usage.llm_input_tokens` | integer | Total LLM input tokens. |
+| `usage.llm_output_tokens` | integer | Total LLM output tokens. |
+| `usage.llm_total_tokens` | integer | Total LLM tokens reported for the call. |
+| `usage.tts_characters_count` | integer | TTS characters used by character-billed providers. |
+| `usage.tts_audio_duration` | number | TTS audio duration in seconds. |
+| `usage.stt_audio_duration` | number | STT audio duration in seconds. |
+| `usage.model_usage` | array | Per-provider/model billable usage entries and their estimated costs. |
+| `usage.estimated_cost_usd` | string/null | Estimated AI-provider cost in USD. Serialized as a decimal string. |
+| `usage.pricing_schema_version` | integer/null | Pricing table schema version used for calculation. |
+| `usage.pricing_complete` | boolean | `true` only when all billable usage has a known rate. |
+| `usage.unpriced_model_usage` | array | Usage entries that could not be priced. Empty when pricing is complete. |
+| `usage.usage_finalized` | boolean | `true` when the final teardown usage write completed. |
+
+The usage row is updated during the call and once at teardown. For an active
+call, values are a current snapshot and may be lower than the final totals.
+Calls that fail before an agent session creates usage data, including
+passthrough calls, can have `usage: null`.
 
 ### HTTP Status Codes
 
@@ -97,7 +129,37 @@ curl -X GET "https://api-livekit-vyom.indusnettechnologies.com/assistant/call-lo
             "text": "Hello, how can I help you?",
             "timestamp": "2024-01-20T14:30:05.000Z"
           }
-        ]
+        ],
+        "usage": {
+          "room_name": "550e8400-e29b-41d4-a716-446655440000_abc123",
+          "assistant_id": "550e8400-e29b-41d4-a716-446655440000",
+          "user_email": "owner@example.com",
+          "mode": "cascade",
+          "llm_realtime_provider": "openai",
+          "llm_model": "gpt-4.1",
+          "llm_input_tokens": 1500,
+          "llm_output_tokens": 300,
+          "llm_total_tokens": 1800,
+          "tts_characters_count": 4500,
+          "tts_audio_duration": 125.5,
+          "stt_provider": "deepgram",
+          "stt_model": "nova-3",
+          "stt_audio_duration": 300.0,
+          "model_usage": [
+            {
+              "provider": "openai",
+              "model": "gpt-4.1",
+              "input_tokens": 1500,
+              "output_tokens": 300,
+              "estimated_cost_usd": "0.0120"
+            }
+          ],
+          "estimated_cost_usd": "0.0234",
+          "pricing_schema_version": 1,
+          "pricing_complete": true,
+          "unpriced_model_usage": [],
+          "usage_finalized": true
+        }
       }
     ],
     "pagination": {

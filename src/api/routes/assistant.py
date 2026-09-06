@@ -1,9 +1,17 @@
+import json
+import uuid
+from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Depends, Query
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from src.api.dependencies import get_current_user
 from src.api.models.api_schemas import (
     CreateAssistant,
     UpdateAssistant,
 )
+from src.api.models.response_models import apiResponse
 from src.api.validation import (
     effective_llm_config,
     effective_value,
@@ -13,14 +21,15 @@ from src.api.validation import (
     resolve_probe_tools,
     will_attach_tools,
 )
-from src.core.providers.keys import mask_assistant_keys, redact_text
-from src.api.models.response_models import apiResponse
-from src.core.db.db_schemas import Assistant, APIKey, CallRecord, AudioAsset
-from src.api.dependencies import get_current_user
+from src.core.db.db_schemas import (
+    APIKey,
+    Assistant,
+    AudioAsset,
+    CallRecord,
+    UsageRecord,
+)
 from src.core.logger import logger
-import uuid
-from datetime import datetime, timezone
-from types import SimpleNamespace
+from src.core.providers.keys import mask_assistant_keys, redact_text
 
 router = APIRouter()
 
@@ -425,7 +434,23 @@ async def get_call_logs(
     # Apply sorting and pagination
     call_logs = await call_log_query.sort(sort_field).skip(skip).limit(limit).to_list()
 
-    call_log_data = [call_log.model_dump(exclude={"id"}) for call_log in call_logs]
+    room_names = [call_log.room_name for call_log in call_logs]
+    usage_by_room = {}
+    if room_names:
+        usage_records = await UsageRecord.find({"room_name": {"$in": room_names}}).to_list()
+        usage_by_room = {
+            usage_record.room_name: json.loads(usage_record.model_dump_json(exclude={"id"}))
+            for usage_record in usage_records
+        }
+
+    call_log_data = []
+    for call_log in call_logs:
+        call_log_data.append(
+            {
+                **call_log.model_dump(exclude={"id"}),
+                "usage": usage_by_room.get(call_log.room_name),
+            }
+        )
 
     return apiResponse(
         success=True,

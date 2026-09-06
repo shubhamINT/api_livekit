@@ -2,23 +2,23 @@ import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi import HTTPException
 from pydantic import ValidationError
 
 from src.api.models.api_schemas import (
-    CreateAssistant,
     NativeSTTConfig,
     UpdateAssistant,
 )
-from src.api.validation import effective_value
 from src.api.routes.assistant import (
     get_assistant_details,
+    get_call_logs,
     merge_interaction_config,
     merge_llm_config,
     update_assistant,
 )
+from src.api.validation import effective_value
 from src.core.agents.stt.factory import resolve_stt
 from src.core.providers.keys import (
     SYSTEM_KEY_PLACEHOLDER,
@@ -28,7 +28,8 @@ from src.core.providers.keys import (
 )
 
 sys.path.append(str(Path(__file__).resolve().parents[1] / "scripts"))
-from migrate_stt_config import legacy_to_stt  # noqa: E402
+from migrate_stt_config import legacy_to_stt
+
 from src.core.db.db_schemas import AssistantInteractionConfig
 
 
@@ -49,6 +50,90 @@ class TestAssistantRoute(unittest.IsolatedAsyncioTestCase):
             patcher = patch(target, AsyncMock(return_value=None))
             self.addCleanup(patcher.stop)
             patcher.start()
+
+    async def test_get_call_logs_includes_nested_usage(self):
+        user = SimpleNamespace(user_email="user@example.com")
+        assistant = SimpleNamespace()
+        call = SimpleNamespace(
+            room_name="room-1",
+            model_dump=lambda **_: {"room_name": "room-1", "call_status": "completed"},
+        )
+        call_query = Mock()
+        call_query.count = AsyncMock(return_value=1)
+        call_query.sort.return_value = call_query
+        call_query.skip.return_value = call_query
+        call_query.limit.return_value = call_query
+        call_query.to_list = AsyncMock(return_value=[call])
+        usage = SimpleNamespace(
+            room_name="room-1",
+            model_dump_json=lambda **_: '{"room_name":"room-1","estimated_cost_usd":"0.0234","pricing_complete":true}',
+        )
+        usage_query = Mock()
+        usage_query.to_list = AsyncMock(return_value=[usage])
+        assistant_model = SimpleNamespace(
+            assistant_id=QueryField(),
+            assistant_created_by_email=QueryField(),
+            assistant_is_active=QueryField(),
+            find_one=AsyncMock(return_value=assistant),
+        )
+        call_model = SimpleNamespace(
+            assistant_id=QueryField(),
+            started_at=QueryField(),
+            find=Mock(return_value=call_query),
+        )
+        usage_model = SimpleNamespace(
+            find=Mock(return_value=usage_query),
+        )
+
+        with patch("src.api.routes.assistant.Assistant", assistant_model), patch(
+            "src.api.routes.assistant.CallRecord", call_model
+        ), patch("src.api.routes.assistant.UsageRecord", usage_model):
+            response = await get_call_logs(
+                "assistant-1", page=1, limit=10, start_date=None, end_date=None,
+                sort_by="started_at", sort_order="desc", current_user=user,
+            )
+
+        self.assertEqual(response.data["logs"][0]["usage"]["estimated_cost_usd"], "0.0234")
+        self.assertTrue(response.data["logs"][0]["usage"]["pricing_complete"])
+        usage_model.find.assert_called_once_with({"room_name": {"$in": ["room-1"]}})
+
+    async def test_get_call_logs_returns_null_usage_when_record_missing(self):
+        user = SimpleNamespace(user_email="user@example.com")
+        assistant = SimpleNamespace()
+        call = SimpleNamespace(
+            room_name="room-without-usage",
+            model_dump=lambda **_: {"room_name": "room-without-usage"},
+        )
+        call_query = Mock()
+        call_query.count = AsyncMock(return_value=1)
+        call_query.sort.return_value = call_query
+        call_query.skip.return_value = call_query
+        call_query.limit.return_value = call_query
+        call_query.to_list = AsyncMock(return_value=[call])
+        usage_query = Mock()
+        usage_query.to_list = AsyncMock(return_value=[])
+        assistant_model = SimpleNamespace(
+            assistant_id=QueryField(),
+            assistant_created_by_email=QueryField(),
+            assistant_is_active=QueryField(),
+            find_one=AsyncMock(return_value=assistant),
+        )
+        call_model = SimpleNamespace(
+            assistant_id=QueryField(),
+            started_at=QueryField(),
+            find=Mock(return_value=call_query),
+        )
+        usage_model = SimpleNamespace(find=Mock(return_value=usage_query))
+
+        with patch("src.api.routes.assistant.Assistant", assistant_model), patch(
+            "src.api.routes.assistant.CallRecord", call_model
+        ), patch("src.api.routes.assistant.UsageRecord", usage_model):
+            response = await get_call_logs(
+                "assistant-1", page=1, limit=10, start_date=None, end_date=None,
+                sort_by="started_at", sort_order="desc", current_user=user,
+            )
+
+        self.assertIsNone(response.data["logs"][0]["usage"])
 
     async def test_update_assistant_merges_partial_interaction_config(self):
         request = UpdateAssistant(
