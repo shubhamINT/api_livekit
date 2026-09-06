@@ -24,7 +24,15 @@ from src.core.logger import logger
 BILLABLE_TYPES = ("llm_usage", "tts_usage", "stt_usage")
 
 # The schema version written into every new record. See UsageRecord in db_schemas.py.
-USAGE_SCHEMA_VERSION = 2
+USAGE_SCHEMA_VERSION = 3
+
+
+def normalize_provider(name: str) -> str:
+    """Return the stable billing-vendor spelling used in model_usage."""
+    normalized = name.lower()
+    if normalized == "api.openai.com" or normalized.endswith(".openai.com"):
+        return "openai"
+    return normalized
 
 
 def _models(entries) -> str | None:
@@ -98,7 +106,11 @@ def summarize_usage(session, extra_usage=()) -> dict:
         "stt_output_tokens": total(stt, "output_tokens"),
         # Full dump, zeros included: pricing reads keys, it should never have to decide
         # whether a missing one means zero or means the SDK stopped reporting it.
-        "model_usage": [e.model_dump() for e in entries if e.type in BILLABLE_TYPES],
+        "model_usage": [
+            {**e.model_dump(), "provider": normalize_provider(e.provider)}
+            for e in entries
+            if e.type in BILLABLE_TYPES
+        ],
         "usage_schema_version": USAGE_SCHEMA_VERSION,
         "sdk_version": _sdk_version(),
     }

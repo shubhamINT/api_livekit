@@ -380,6 +380,8 @@ webhook's `data.usage` block is missing entirely).
 | `stt_input_tokens` is `0` on a cascade OpenAI call | The assistant is on the batch REST path (`use_realtime: false`), which reports no usage. The API now rejects that pairing for the token-billed models; a row stored before that gate is overridden at call time with a `use_realtime=false` warning in the worker log. Only `whisper-1` is billed by duration and may use batch. |
 | `stt_audio_duration` is `0` but `stt_input_tokens` is not | Correct for token-billed STT. The OpenAI ASR charges per token, not per second; `stt_input_audio_tokens` carries the audio share. |
 | `usage_schema_version` is `1` | An old record. The cached-token and token-billed STT/TTS fields did not exist when it was written; they read `0` because nothing was captured, not because nothing was used. |
+| `usage_schema_version` is `2` and providers differ in casing or use `api.openai.com` | Run `uv run python scripts/normalize_model_usage_providers.py` to preview, then rerun with `--apply`. The migration rewrites only version-2 rows and sets them to version 3. |
+| `model_usage` providers disagree between calls | Compare `usage_schema_version`. Version 2 preserves plugin spellings; version 3 normalizes lowercase vendors and maps `*.openai.com` to `openai`. |
 | Cached tokens `0` on a cascade call | Normal on a short call. OpenAI only caches a prompt above its own minimum length, and the first turn never hits. |
 
 To read one row directly:

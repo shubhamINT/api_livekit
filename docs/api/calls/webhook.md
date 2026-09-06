@@ -53,9 +53,15 @@ Content-Type: application/json
     "call_type": "outbound",
     "call_service": "exotel",
     "platform_number": "08044319240",
-    "usage": {
-      "mode": "cascade",
-      "llm_model": "gpt-4.1-mini",
+      "usage": {
+       "mode": "cascade",
+       "call_duration_minutes": 5.5,
+       "call_service": "exotel",
+       "tts_provider": "cartesia",
+       "llm_realtime_provider": "openai",
+       "llm_model": "gpt-4.1-mini",
+       "llm_input_tokens": 9250,
+       "llm_output_tokens": 1230,
       "llm_input_audio_tokens": 0,
       "llm_input_text_tokens": 850,
       "llm_input_image_tokens": 0,
@@ -78,8 +84,10 @@ Content-Type: application/json
       "stt_input_tokens": 0,
       "stt_input_audio_tokens": 0,
       "stt_input_text_tokens": 0,
-      "stt_output_tokens": 0,
-      "usage_schema_version": 2,
+       "stt_output_tokens": 0,
+       "model_usage": [{"type": "llm_usage", "provider": "openai", "model": "gpt-4.1-mini", "input_tokens": 9250, "output_tokens": 1230}],
+       "usage_schema_version": 3,
+       "sdk_version": "1.7.1",
       "usage_finalized": true
     }
   }
@@ -121,7 +129,13 @@ Content-Type: application/json
 | `data.platform_number`         | string  | Platform's own phone number used for this call. |
 | `data.usage`                   | object  | Per-component usage metrics (if available). Raw counts, not costs. |
 | `data.usage.mode`                   | string | Runtime mode for this call: `pipeline`, `realtime` or `cascade`. See [Models & Providers](../../reference/models.md). |
+| `data.usage.call_duration_minutes` | number | Usage record's copied call duration in minutes. |
+| `data.usage.call_service` | string | Telephony service copied onto the usage record. |
+| `data.usage.tts_provider` | string | TTS provider configured for the call. |
+| `data.usage.llm_realtime_provider` | string | Realtime LLM provider, when applicable. |
 | `data.usage.llm_model`              | string | LLM model(s) used, comma-separated if more than one. |
+| `data.usage.llm_input_tokens` | number | Total LLM input tokens. |
+| `data.usage.llm_output_tokens` | number | Total LLM output tokens. |
 | `data.usage.llm_input_audio_tokens` | number | LLM audio input tokens (`0` in cascade — the LLM receives text). |
 | `data.usage.llm_input_text_tokens`  | number | LLM text input tokens.                |
 | `data.usage.llm_input_image_tokens` | number | LLM image input tokens. `0` unless the conversation carried images. |
@@ -145,7 +159,9 @@ Content-Type: application/json
 | `data.usage.stt_input_audio_tokens` | number | Audio part of `stt_input_tokens` — a subset, not additional. `0` unless the provider reports the split. |
 | `data.usage.stt_input_text_tokens`  | number | Text part of `stt_input_tokens` — a subset, not additional. |
 | `data.usage.stt_output_tokens`      | number | STT output (text) tokens. Token-billed STT only. |
-| `data.usage.usage_schema_version`   | number | `2` for calls recorded from 2026-09 onwards. `1` marks an older record that carries only the non-cached LLM and TTS counts; treat its missing fields as unknown, not as zero. |
+| `data.usage.model_usage` | array | Per-component `(type, provider, model)` usage entries. Provider values are normalized for schema version 3. |
+| `data.usage.usage_schema_version`   | number | `3` for newly recorded calls. `2` has legacy provider spellings. `1` marks an older partial record; treat missing fields as unknown, not as zero. |
+| `data.usage.sdk_version` | string | `livekit-agents` version that produced the numbers. |
 | `data.usage.usage_finalized`        | boolean | `true` when the counts come from the write the worker makes at teardown. `false` means the worker did not get that far — the record is the last mid-call snapshot, so the counts are a floor rather than the final total. |
 
 !!! warning "Cached token counts are subsets"

@@ -256,6 +256,14 @@ class TestLiveKitLifecycle(unittest.IsolatedAsyncioTestCase):
                     stt_provider="sarvam",
                     stt_model="saaras:v3",
                     stt_audio_duration=31.25,
+                    model_usage=[{"type": "stt_usage", "provider": "sarvam", "model": "saaras:v3"}],
+                    sdk_version="1.7.1",
+                    call_duration_minutes=1.0,
+                    call_service="exotel",
+                    tts_provider="cartesia",
+                    llm_realtime_provider="openai",
+                    llm_input_tokens=100,
+                    llm_output_tokens=50,
                 )
             ),
         )
@@ -280,6 +288,14 @@ class TestLiveKitLifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage["llm_total_tokens"], 155)
         self.assertEqual(usage["llm_input_cached_text_tokens"], 60)
         self.assertEqual(usage["usage_schema_version"], 1)
+        self.assertEqual(usage["model_usage"][0]["provider"], "sarvam")
+        self.assertEqual(usage["sdk_version"], "1.7.1")
+        self.assertEqual(usage["llm_input_tokens"], 100)
+        self.assertEqual(usage["llm_output_tokens"], 50)
+        self.assertEqual(usage["call_duration_minutes"], 1.0)
+        self.assertEqual(usage["call_service"], "exotel")
+        self.assertEqual(usage["tts_provider"], "cartesia")
+        self.assertEqual(usage["llm_realtime_provider"], "openai")
 
     async def test_send_end_call_webhook_logs_non_2xx_as_error(self):
         """A rejecting customer endpoint must not be recorded as a successful delivery."""

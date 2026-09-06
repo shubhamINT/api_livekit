@@ -1662,6 +1662,24 @@ class TestUnknownConfigKeys(unittest.TestCase):
 
 
 class TestSummarizeUsage(unittest.TestCase):
+    def test_normalizes_provider_names(self):
+        from src.core.agents.usage import normalize_provider
+
+        cases = {
+            "Cartesia": "cartesia",
+            "Deepgram": "deepgram",
+            "ElevenLabs": "elevenlabs",
+            "Sarvam": "sarvam",
+            "sarvam": "sarvam",
+            "openai": "openai",
+            "api.openai.com": "openai",
+            "edge.openai.com": "openai",
+            "Gemini": "gemini",
+            "Vertex AI": "vertex ai",
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw):
+                self.assertEqual(normalize_provider(raw), expected)
     def _usage(self):
         return AgentSessionUsage(
             model_usage=[
@@ -1822,7 +1840,7 @@ class TestSummarizeUsage(unittest.TestCase):
 
     def test_records_the_schema_and_sdk_versions(self):
         metered = summarize_usage(SimpleNamespace(usage=self._usage()))
-        self.assertEqual(metered["usage_schema_version"], 2)
+        self.assertEqual(metered["usage_schema_version"], 3)
         self.assertEqual(metered["sdk_version"], livekit_agents_version)
 
     def test_extra_usage_is_folded_like_a_session_entry(self):

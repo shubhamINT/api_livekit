@@ -435,7 +435,13 @@ class LiveKitService:
         if usage_record:
             filtered_data["usage"] = {
                 "mode": usage_record.mode,
+                "call_duration_minutes": usage_record.call_duration_minutes,
+                "call_service": usage_record.call_service,
+                "tts_provider": usage_record.tts_provider,
+                "llm_realtime_provider": usage_record.llm_realtime_provider,
                 "llm_model": usage_record.llm_model,
+                "llm_input_tokens": usage_record.llm_input_tokens,
+                "llm_output_tokens": usage_record.llm_output_tokens,
                 "llm_input_audio_tokens": usage_record.llm_input_audio_tokens,
                 "llm_input_text_tokens": usage_record.llm_input_text_tokens,
                 "llm_input_image_tokens": usage_record.llm_input_image_tokens,
@@ -466,6 +472,8 @@ class LiveKitService:
                 "stt_input_text_tokens": usage_record.stt_input_text_tokens,
                 "stt_output_tokens": usage_record.stt_output_tokens,
                 "usage_schema_version": usage_record.usage_schema_version,
+                "model_usage": usage_record.model_usage,
+                "sdk_version": usage_record.sdk_version,
                 # False means the worker never reached teardown, so these counts are the
                 # last mid-call snapshot rather than the final total.
                 "usage_finalized": usage_record.usage_finalized,

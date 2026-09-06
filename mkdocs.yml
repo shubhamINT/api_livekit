@@ -148,6 +148,7 @@ nav:
       - Generate Web Call Token: api/calls/web-call.md
       - Call Flow: api/calls/flow.md
       - End Call Webhook: api/calls/webhook.md
+      - Per-Call Usage: api/calls/usage.md
       - Status Tracking: api/calls/tracking.md
       - Best Practices: api/calls/best-practices.md
 
@@ -179,6 +180,8 @@ nav:
       - By Phone Number: api/analytics/by-phone-number.md
       - By Time: api/analytics/by-time.md
       - By Service: api/analytics/by-service.md
+      - Token Summary: api/analytics/tokens-summary.md
+      - Tokens by Model: api/analytics/tokens-by-model.md
 
     - Admin (Super-Admin):
       - Overview: api/admin/index.md
@@ -187,5 +190,6 @@ nav:
       - Calls by Phone Number: api/admin/by-phone-number.md
       - Calls by Service: api/admin/by-service.md
       - Token Summary: api/admin/token-summary.md
+      - Tokens by Model: api/admin/tokens-by-model.md
       - Tokens by User: api/admin/tokens-by-user.md
       - Tokens by Assistant: api/admin/tokens-by-assistant.md

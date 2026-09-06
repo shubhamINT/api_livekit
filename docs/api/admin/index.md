@@ -30,6 +30,7 @@ The API key must have `is_super_admin` set to `true`. Regular API keys receive a
 | Endpoint | Description |
 | :--- | :--- |
 | [Token Summary](token-summary.md) | Aggregate LLM token and TTS usage across the platform. |
+| [Tokens by Model](tokens-by-model.md) | Per-component provider/model attribution across the platform. |
 | [Tokens by User](tokens-by-user.md) | Per-user token consumption breakdown. |
 | [Tokens by Assistant](tokens-by-assistant.md) | Per-assistant token consumption breakdown. |
 

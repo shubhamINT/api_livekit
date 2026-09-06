@@ -4,10 +4,10 @@ Every call has one `UsageRecord`, keyed by `room_name`, holding the raw usage ea
 provider will bill for. These are counts, not costs — no rate is stored anywhere, and
 nothing in the platform converts usage to money.
 
-The record reaches you three ways: the [end-of-call webhook](../api/calls/webhook.md), the
-`usage_records` collection directly, and the admin analytics endpoints
-([summary](../api/admin/token-summary.md), [by user](../api/admin/tokens-by-user.md),
-[by assistant](../api/admin/tokens-by-assistant.md)).
+The record reaches you four ways: the [end-of-call webhook](../api/calls/webhook.md), the
+[per-call usage endpoint](../api/calls/usage.md), the `usage_records` collection directly, and
+the user/admin analytics endpoints ([user summary](../api/analytics/tokens-summary.md),
+[user by model](../api/analytics/tokens-by-model.md), [admin by model](../api/admin/tokens-by-model.md)).
 
 ## Where the numbers come from
 
@@ -16,8 +16,9 @@ The LiveKit agents SDK collects that itself from the plugin metrics of every com
 `AgentSession` owns, so nothing here makes an extra provider call, and a self-hosted worker
 needs no Cloud credentials.
 
-The SDK reports **one entry per `(provider, model)` pair**. Those entries are both stored
-raw in `model_usage` and summed into the flat columns.
+The SDK reports **one entry per `(provider, model)` pair**. Those entries are stored in
+`model_usage` and summed into the flat columns. Metrics and model ids remain SDK-reported;
+provider is normalized to one lowercase billing-vendor spelling at write time.
 
 ## Read `model_usage` for pricing
 
@@ -44,7 +45,7 @@ correctly from those columns alone.
   },
   {
     "type": "tts_usage",
-    "provider": "Cartesia",
+    "provider": "cartesia",
     "model": "sonic-3",
     "characters_count": 485,
     "audio_duration": 32.5
@@ -54,13 +55,11 @@ correctly from those columns alone.
 
 Every key is present even when zero, so a missing key means a schema change, never a zero.
 
-**`provider` is whatever the plugin calls itself, and is not normalized.** Expect vendor
-casing — `"Cartesia"`, `"Deepgram"`, `"ElevenLabs"` — and, for the OpenAI STT plugin, a
-hostname: it returns the client's base URL netloc, so a cascade OpenAI STT entry reads
-`"api.openai.com"`. The two entries this runtime builds itself are the exception and are
-lowercase by construction: `"sarvam"` for both Sarvam STT paths and `"openai"` for the
-Realtime API's own ASR. Anything keying on `(provider, model)` has to match
-case-insensitively, or map these before it looks a rate up.
+**`provider` is normalized at write time.** Names are lowercased, and `api.openai.com` plus
+any `*.openai.com` hostname becomes `"openai"`. Other names keep their lowercased spelling:
+`"cartesia"`, `"deepgram"`, `"elevenlabs"`, `"sarvam"`, `"gemini"`, and `"vertex ai"` remain
+distinct billing keys. Vertex AI is not folded into Gemini because they can bill separate
+accounts. Existing v2 rows retain their old spellings until the normalization migration runs.
 Entries are limited to the billable components — `llm_usage`, `tts_usage`, `stt_usage`. The
 SDK also reports `eot_usage` for the turn detector; this deployment runs
 `inference.TurnDetector(version="v1-mini")` locally, so it costs nothing and is not stored.
@@ -238,9 +237,11 @@ settled calls.
 | Version | Meaning |
 |---|---|
 | `1` | Written before 2026-09. Flat LLM and TTS counts only; no cached totals, no token-billed STT/TTS fields, no `model_usage`. Every field added since reads `0` because it was never captured — treat it as unknown, not as zero. |
-| `2` | Everything on this page. |
+| `2` | Everything on this page, but `model_usage.provider` uses plugin spellings and may contain vendor casing or `api.openai.com`. |
+| `3` | Everything on this page with normalized `model_usage.provider` values. New records use this version. |
 
-There is no backfill. The data was never collected, so it cannot be recovered.
+Run `uv run python scripts/normalize_model_usage_providers.py` to preview the v2 migration, then
+add `--apply` to rewrite only v2 rows and set them to version 3.
 
 `sdk_version` records the `livekit-agents` version that produced the numbers, because what
 the SDK reports changes between releases — `input_cache_creation_tokens`, for instance,

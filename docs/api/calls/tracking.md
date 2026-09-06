@@ -43,6 +43,9 @@ Full query parameters (pagination, date range, sort) are documented in [Call Log
 
 Use `GET /call/records` to query across all calls for your account — including passthrough calls (which have no assistant).
 
+Use `GET /call/records/{room_name}/usage` to retrieve the complete usage record for one of your
+calls, including per-model attribution.
+
 ```bash
 # All calls, newest first
 curl -X GET "https://api-livekit-vyom.indusnettechnologies.com/call/records?page=1&limit=10" \

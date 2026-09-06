@@ -19,7 +19,8 @@ FastAPI backend plus LiveKit worker for real-time voice assistants with `pipelin
 - Sends post-call webhook notifications with both actual and billable call duration.
 - Writes activity logs for tool calls, inbound context lookup, and end-call webhook delivery.
 - Tracks per-call usage via SDK metrics: LLM tokens, TTS characters, and — in `cascade` mode — STT audio duration attributed to its own stage.
-- Provides analytics endpoints for call duration, volume, and usage monitoring.
+- Tracks per-model `(component, provider, model)` usage with normalized provider keys, and includes it in the end-call webhook.
+- Provides per-call usage, per-user token summaries, and per-model analytics endpoints.
 - Super-admin endpoints for cross-tenant analytics and token usage visibility.
 - Protects worker capacity by buffering outbound requests and limiting new job intake under higher CPU load.
 
@@ -81,6 +82,7 @@ tables: [Compatibility Matrix](docs/reference/compatibility.md).
 | `uv run python scripts/replay_cascade_request.py <assistant_id>` | *Why* did the provider refuse this assistant's request? Replays the exact payload over HTTPS and, when no parameter is named, bisects the knobs automatically. |
 | `uv run python scripts/check_model_allowlist.py` | Is every allowlisted model still servable by this key? Exits non-zero on drift, so it works as a pre-deploy gate. Add `--probe <model>` to test one id — `/v1/models` lists deprecated ids that answer `404`. |
 | `uv run python scripts/audit_assistant_models.py` | Which stored assistants hold a model this deployment cannot run? `--apply` clears the field so they fall back to the default. |
+| `uv run python scripts/normalize_model_usage_providers.py` | Preview legacy v2 provider spellings in usage records; add `--apply` to migrate them to schema v3. |
 
 All three are read-only unless `--apply` is passed, and none of them print an API key.
 Symptom-by-symptom guide: [Troubleshooting](docs/reference/troubleshooting.md).
@@ -311,6 +313,13 @@ Backfill existing call records with billable minutes:
 uv run python -m scripts.backfill_billable_duration_minutes
 ```
 
+Preview provider normalization for existing usage records, then apply it explicitly:
+
+```bash
+uv run python scripts/normalize_model_usage_providers.py
+uv run python scripts/normalize_model_usage_providers.py --apply
+```
+
 ## Documentation
 
 - MkDocs source lives in `docs/`. The same markdown is served to coding agents over MCP at
@@ -342,6 +351,7 @@ Use these pages as the canonical payload contracts:
 - Inbound context strategy webhook: `docs/api/inbound-context-strategy/index.md`
 - Tool webhook payload and response handling: `docs/api/tools/webhook.md`
 - End-call webhook payload: `docs/api/calls/webhook.md`
+- Per-call usage: `docs/api/calls/usage.md`
 
 ## API Areas
 
@@ -353,11 +363,12 @@ Use these pages as the canonical payload contracts:
 - `/call/queue/{queue_id}`
 - `/call/outbound_passthrough` — start a passthrough call (web ↔ SIP, no agent)
 - `/call/records` — list call records with optional filters; `passthrough_only=true` for passthrough-only view
+- `/call/records/{room_name}/usage` — retrieve one owned call's full usage record, including `model_usage`
 - `/inbound`
 - `/inbound_context_strategy`
 - `/logs`
 - `/web_call/get_token` — supports `text_only: true` for chatbot mode (no audio, no recording; `pipeline` and `cascade` assistants, not `realtime`)
-- `/analytics` — per-user call analytics (dashboard, by-assistant, by-phone-number, by-time, by-service)
+- `/analytics` — per-user call and token analytics (dashboard, call breakdowns, token summary, tokens by model)
 - `/admin` — super-admin cross-tenant analytics and token usage (requires `is_super_admin` flag)
 
 ## Assistant Modes

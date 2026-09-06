@@ -53,11 +53,9 @@ installed `livekit-agents` 1.6.7, on 2026-09-04:
 
 ## Doing now
 
-Nothing. PR 0 through PR 4 have all landed, PR 5 turned out to be empty (every test and doc it
-listed shipped inside the PR that needed it), PR 6 closed the launch-path follow-up PR 0 left
-behind, and PR 7 closed the last measurement gap — found by auditing every configurable
-provider against the installed plugins rather than assuming the goal was met because the PRs
-were done.
+PR 8 — deliver per-model usage to webhook and API consumers. Measurement is complete; this PR
+normalizes providers at write time, migrates version-2 rows, exposes per-call and per-model
+usage, and documents the consumer contracts.
 
 Still outstanding, all needing a real deployment: the PR 0 manual verification (one inbound
 Exotel call and one cascade call — audio both ways, transcript, usage record) and the PR 1 /
@@ -133,10 +131,10 @@ Deviations from the plan, both deliberate:
   (session.py:642, 819) before `_persist_usage` is ever awaited, so the closure is already
   correct; churning it is unrelated risk.
 
-The new fields are exposed on the end-call webhook and in all three `/admin` token analytics
-aggregations, additive only. Tests went into the existing `TestSummarizeUsage` rather than a
-new file, and `tests/test_livekit_lifecycle.py` now builds its fake usage record with
-`UsageRecord.model_construct()` so the next added field cannot break it. One unrelated test
+The new fields are exposed in the stored record and admin aggregation implementation; webhook
+and ordinary-user delivery are completed by PR 8. Tests went into the existing
+`TestSummarizeUsage` rather than a new file, and `tests/test_livekit_lifecycle.py` now builds its
+fake usage record with `UsageRecord.model_construct()` so the next added field cannot break it. One unrelated test
 needed a fix: `test_mcp_docs.py` asserted that a page ranks in the top 8 of a keyword search,
 and the new docs page pushed it to 9th; the search window in the test widened to 10.
 
@@ -439,6 +437,24 @@ Manual, needs a deployment:
   providers still `"Cartesia"` / `"Deepgram"`.
 - One pipeline call and one realtime call → identical to PR 2 / PR 3 behaviour.
 
+**PR 8 — per-model usage attribution reaches its consumers.** `model_usage` is now the stable
+source of per-(component, provider, model) billing attribution outside MongoDB:
+
+- `summarize_usage` normalizes providers to lowercase and maps `api.openai.com` plus OpenAI
+  subdomains to `openai`; schema version 3 records that shape.
+- `scripts/normalize_model_usage_providers.py` dry-runs by default and migrates only version-2
+  rows with `--apply`.
+- The end-call webhook includes `model_usage`, `sdk_version`, token totals, call metadata, and
+  provider metadata.
+- Users can read one owned call at `/call/records/{room_name}/usage`, flat token totals at
+  `/analytics/tokens/summary`, and per-model totals at `/analytics/tokens/by-model`.
+- Super-admins can read per-model totals at `/admin/analytics/tokens/by-model`.
+- Shared dependency-free aggregation builders keep user and admin grouping semantics aligned;
+  non-finalized rows remain included.
+
+The raw SDK metrics remain intact. Only the dumped `provider` key is normalized, and Vertex AI
+remains distinct from Gemini because they may bill separate accounts.
+
 ## Left
 
 **PR 5 — closed, nothing left to do.** Every item shipped inside the PR that needed it: the
@@ -447,14 +463,6 @@ field-level tests in `TestSummarizeUsage`, the per-mode coverage (PR 2
 `tests/test_native_stt_usage.py`, PR 4 `tests/test_cascade_config.py::TestUpsertUsageRecord`),
 the reference page `docs/reference/usage-accounting.md` — whose "Known gaps" section PR 3
 emptied — and the troubleshooting rows.
-
-**Follow-up left by PR 7 — normalizing `provider` in `model_usage`.**
-
-Only the two entries this runtime builds itself are lowercase. The rest carry whatever the
-plugin calls itself, and the OpenAI STT plugin carries a hostname. Pricing will have to map
-these; whether that mapping lives in the pricing package or in `summarize_usage` is a decision
-for whoever builds it. Documented rather than changed here, because rewriting a provider string
-at write time makes stored rows disagree with the SDK that produced them.
 
 **Follow-up left by PR 6 — the developer `dev` command.**
 

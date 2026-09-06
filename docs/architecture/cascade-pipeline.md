@@ -392,11 +392,12 @@ read — the flat columns sum across a mid-call model swap. See
 [Usage accounting](../reference/usage-accounting.md).
 
 These values are raw usage metrics, not costs. Apply your own provider rates downstream. They
-reach you three ways: the [end-of-call webhook](../api/calls/webhook.md), the
-`usage_records` collection, and the admin analytics endpoints
-([summary](../api/admin/token-summary.md),
-[by user](../api/admin/tokens-by-user.md),
-[by assistant](../api/admin/tokens-by-assistant.md)).
+reach you through the [end-of-call webhook](../api/calls/webhook.md), the
+[per-call usage endpoint](../api/calls/usage.md), the `usage_records` collection, and analytics
+endpoints ([user summary](../api/analytics/tokens-summary.md),
+[user by model](../api/analytics/tokens-by-model.md), [admin summary](../api/admin/token-summary.md),
+[admin by model](../api/admin/tokens-by-model.md),
+[by user](../api/admin/tokens-by-user.md), [by assistant](../api/admin/tokens-by-assistant.md)).
 
 All aggregation is in-process; no Cloud call is involved.
 

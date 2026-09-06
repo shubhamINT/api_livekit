@@ -2,9 +2,9 @@
 
 ## Overview
 
-The analytics endpoints provide per-user call metrics scoped to the authenticated API key owner. Use them to monitor call volume, duration, and status breakdowns across assistants, phone numbers, time periods, and telephony services.
+The analytics endpoints provide per-user call and usage metrics scoped to the authenticated API key owner. Use them to monitor call volume, duration, status, and per-model consumption.
 
-All analytics data is derived from the `CallRecord` collection and filtered by the caller's `created_by_email`.
+Call analytics use `CallRecord`; token analytics use `UsageRecord` and filter by the caller's `user_email`.
 
 ## Authentication
 
@@ -32,6 +32,8 @@ Every analytics endpoint accepts optional date-range filters:
 | [By Phone Number](by-phone-number.md) | Per destination number breakdown. |
 | [By Time](by-time.md) | Time-series data with day, week, or month granularity. |
 | [By Service](by-service.md) | Breakdown by telephony service (exotel, twilio, web). |
+| [Token Summary](tokens-summary.md) | Flat token, character, duration, and call totals. |
+| [Tokens by Model](tokens-by-model.md) | Per-component provider/model attribution. |
 
 !!! info "Data scoping"
 

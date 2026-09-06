@@ -401,13 +401,12 @@ class UsageRecord(Document):
     stt_input_text_tokens: int = 0
     stt_output_tokens: int = 0
 
-    # Per (provider, model) usage exactly as the SDK reported it, filtered to the billable
-    # components. This is the source of truth for pricing: the flat columns above sum
-    # across a mid-call model swap, this list does not. Rates are never stored here, so a
-    # price change needs no migration and no backfill.
+    # Per (provider, model) usage, filtered to billable components. Metrics and model ids are
+    # SDK-reported; provider is normalized to a stable lowercase billing-vendor key.
     model_usage: List[Dict] = Field(default_factory=list)
     # 1 = pre-2026-09 rows, which carry only the flat LLM/TTS columns and no model_usage.
-    # 2 = every field above. Treat a version 1 row as partial, not as zero usage.
+    # 2 = every field above with plugin-reported provider spellings.
+    # 3 = every field above with normalized model_usage providers.
     usage_schema_version: int = 1
     sdk_version: Optional[str] = None  # livekit-agents version that produced the numbers
     # True only on the write teardown makes. The row is also written every
