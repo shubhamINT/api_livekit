@@ -278,6 +278,12 @@ Dockerfile selection by deployment mode:
   - `docker/requirements-control.txt`
   - `docker/requirements-agent.txt`
 
+The manifests are intentionally role-specific. The control image is used by both `api` and the
+singleton `sip_dispatcher`; the agent image is used only by LiveKit workers. See
+[Container Dependencies](docs/architecture/dependencies.md) for the package ownership, build-only
+MkDocs dependencies, safe cleanup candidates, and the difference between image size and runtime
+RAM. Current release and migration notes: [Changelog](docs/changelog.md).
+
 Production dual-host deployment (recommended):
 
 ```bash
@@ -345,6 +351,11 @@ mkdocs build --strict
 ```bash
 mkdocs serve
 ```
+
+The read-only MCP endpoint exposes the same Markdown source to AI agents. Agents should search
+first, retrieve the specific page, and use the changelog only for release context:
+`https://api-livekit-vyom.indusnettechnologies.com/mcp`. It does not access tenant data or inspect
+the running deployment.
 
 ## Webhook Contracts
 

@@ -6,6 +6,12 @@ This documentation is also served as an **MCP server**, so AI coding agents can 
 directly instead of you copy-pasting pages into a chat. Same markdown you are reading now,
 exposed as three callable tools over the Model Context Protocol.
 
+The server is read-only and versioned with the API release. At release `1.3.0`, it serves the
+same source tree used by MkDocs, including release notes, API contracts, compatibility rules,
+usage schema versions, migration commands, runtime-mode guidance, and container dependency
+guidance. It cannot inspect your assistant records, provider account, Docker host, or current
+deployment; answers about those must be qualified as deployment-specific.
+
 Add the URL once to your agent and ask questions like "how do I trigger an outbound call
 with this API?" — the agent searches the docs, reads the right page, and answers with the
 real endpoint paths, fields and payloads.
@@ -27,6 +33,23 @@ real endpoint paths, fields and payloads.
 
 `search_docs` is keyword-based — it counts how often your words appear in each page and
 weights title matches higher. Start there, then call `get_doc` on the most promising path.
+
+## Reliable answer workflow
+
+For an agent answering a user through MCP:
+
+1. Call `search_docs` with the user's main nouns and endpoint/model/config names.
+2. Call `get_doc` for the most specific API or reference page returned. Use `list_docs` when the
+   question spans multiple areas.
+3. Check `reference/compatibility.md`, `reference/models.md`, and the relevant create/update page
+   for configuration questions. Check `reference/usage-accounting.md` for usage or cost questions.
+4. Check `changelog.md` for release-specific behavior, breaking changes, and migrations, but do
+   not use a changelog as the sole source for an endpoint contract.
+5. Answer only from retrieved documentation. Never invent an endpoint, model ID, default, price,
+   migration, or provider capability. If the pages do not establish an answer, say that the
+   documentation does not establish it and identify the page or API information needed.
+6. State version-sensitive facts, schema versions, nullable fields, and whether a cost is an
+   estimate. Distinguish documented defaults from values supplied by the user's deployment.
 
 ## Add it to your agent
 
@@ -214,6 +237,8 @@ Once connected, ask your agent things like:
 - "What fields does `assistant_tts_config` take for Cartesia?"
 - "Show me the end-of-call webhook payload."
 - "Which STT providers are supported and how do I switch?"
+- "What changed in 1.3.0, and which migrations are required?"
+- "Which container owns this dependency, and does it affect runtime RAM or only image size?"
 
 ## Example Request
 

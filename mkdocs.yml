@@ -87,6 +87,7 @@ nav:
   - Architecture:
     - Overview: architecture/index.md
     - Runtime Modes & Startup: architecture/runtime-modes.md
+    - Container Dependencies: architecture/dependencies.md
     - Cascade Pipeline (STT/LLM/TTS): architecture/cascade-pipeline.md
     - Call Flows & Queueing: architecture/call-flows.md
     - Audio Pipeline: architecture/audio-pipeline.md

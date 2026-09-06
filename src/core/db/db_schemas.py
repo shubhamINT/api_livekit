@@ -1,11 +1,13 @@
+import uuid
 from datetime import datetime, timezone
-from typing import Optional, Literal, List, Dict
 from decimal import Decimal
+from typing import Dict, List, Literal, Optional
+
 from beanie import Document, Indexed
-from pydantic import BaseModel, Field, EmailStr
+from bson.decimal128 import Decimal128
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from pymongo import IndexModel
 from pymongo.collation import Collation
-import uuid
 
 
 # API key storage
@@ -345,6 +347,29 @@ class ActivityLog(Document):
 
 class UsageRecord(Document):
     """Per-call usage metrics for token and duration tracking."""
+
+    @staticmethod
+    def _convert_decimal128(value):
+        if isinstance(value, Decimal128):
+            return value.to_decimal()
+        if isinstance(value, dict):
+            return {
+                key: UsageRecord._convert_decimal128(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [UsageRecord._convert_decimal128(item) for item in value]
+        return value
+
+    @field_validator("estimated_cost_usd", mode="before")
+    @classmethod
+    def convert_estimated_cost(cls, value):
+        return cls._convert_decimal128(value)
+
+    @field_validator("model_usage", mode="before")
+    @classmethod
+    def convert_model_usage_costs(cls, value):
+        return cls._convert_decimal128(value)
 
     room_name: Indexed(str, unique=True)  # 1:1 with CallRecord
     assistant_id: str
