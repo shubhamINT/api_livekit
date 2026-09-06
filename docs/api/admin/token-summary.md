@@ -100,3 +100,6 @@ curl -X GET "https://api-livekit-vyom.indusnettechnologies.com/admin/analytics/t
 - `total_llm_tokens` is the sum of all input and output token fields (including cached).
 - Records written before 2026-09 (`usage_schema_version` 1) contribute `0` to every field added
   since. See [Usage accounting](../../reference/usage-accounting.md).
+- Calls still in progress are included. The record is rewritten every 15 s while a call runs,
+  so a live call contributes the usage it has spent so far. `usage_finalized` marks the rows
+  written at teardown; the aggregations do not filter on it.

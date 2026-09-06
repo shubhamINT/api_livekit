@@ -368,7 +368,9 @@ webhook's `data.usage` block is missing entirely).
 
 | Symptom | Cause |
 |---|---|
-| No `usage_records` row at all | The worker died before teardown, or the row lost a race on the unique `room_name` index. The worker log has `Failed to persist usage record`. |
+| No `usage_records` row at all | The worker died in the first 15 s, before any snapshot was written, or the call never got past setup. A worker that dies later leaves the last snapshot behind. The worker log has `Failed to persist usage record`. |
+| A row exists but `usage_finalized` is `false`, and the call is over | The worker never reached teardown — crash, OOM kill, container restart. The counts are the last mid-call snapshot: a floor, missing up to 15 s of usage, with `call_duration_minutes` stopped at the same moment. Check the worker log for the job that owned that `room_name`. |
+| A row exists but `usage_finalized` is `false`, and the call is still up | Expected. The record is rewritten every 15 s while the call runs and the flag flips at teardown. |
 | Every field `0`, `model_usage` empty, `Could not read session usage` in the log | Teardown ran before `AgentSession` was built — the call failed during setup. Check for an earlier error in the same job. |
 | STT fields `0` on a Gemini `realtime` call | Expected, and nothing is missing. Gemini's Live API reports no per-transcription usage; the caller's audio is already inside the LLM prompt tokens. |
 | STT fields `0` on an OpenAI `realtime` call | Not expected. The Realtime API's own ASR reports usage on every transcription, so a zero means no transcription ran at all — check that `input_audio_transcription` was configured. The teardown log line shows `stt=none`. |

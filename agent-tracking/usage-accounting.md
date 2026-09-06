@@ -53,14 +53,12 @@ installed `livekit-agents` 1.6.7, on 2026-09-04:
 
 ## Doing now
 
-**PR 4 — durability.** Usage is written once, at teardown. A worker that crashes mid-call
-leaves no record at all. Plan: subscribe to `session_usage_updated` and upsert on the unique
-`room_name`, throttled to at most one write per 15 s, and make the teardown write an upsert
-too — which also removes the duplicate-key path when two teardown routes race.
+Nothing. PR 0 through PR 4 have all landed, and PR 5 turned out to be empty: every test and
+doc it listed shipped inside the PR that needed it.
 
 Still outstanding, all needing a real deployment: the PR 0 manual verification (one inbound
 Exotel call and one cascade call — audio both ways, transcript, usage record) and the PR 1 /
-PR 2 / PR 3 verification described in their sections below.
+PR 2 / PR 3 / PR 4 verification described in their sections below.
 
 ## Done
 
@@ -237,25 +235,65 @@ Manual, needs a deployment:
   `input_audio_transcription` is `None` there).
 - One `realtime` Gemini call → STT fields still `0`, by design.
 
+**PR 4 — the record survives a worker that never reaches teardown.** `UsageRecord` was
+written once, by a plain `insert()` at the end of `_flush_and_end_call`. A worker that died
+mid-call — crash, OOM kill, container restart — lost every token the call had already spent,
+and the end-of-call webhook found no row and silently omitted its whole `usage` block. A
+second write was an error rather than an update: `room_name` is uniquely indexed, so a
+duplicate `insert()` raised `DuplicateKeyError` into the blanket `except`.
+
+The write is now incremental and idempotent. `upsert_usage_record`
+(`src/core/agents/usage.py`) upserts on `room_name`, leaving `created_at` out of the update so
+it keeps marking when the row first appeared. `_persist_usage(final: bool = True)` is called
+by a 15 s `_usage_flusher()` loop while the call runs and once more at teardown; teardown
+cancels the loop first, so a snapshot can never land after the authoritative write. An interim
+write is skipped when nothing moved — the comparison excludes `call_duration_minutes`, which
+grows on the wall clock and would otherwise defeat it on every tick.
+
+`usage_finalized` (new `UsageRecord` field, also on the end-of-call webhook) separates the two
+cases that now look alike: `true` is the teardown write, `false` on a call that is over means
+the worker died and the counts are a floor, missing up to 15 s. `usage_schema_version` stays
+`2` — nothing about what is *measured* changed.
+
+Changed from the plan, agreed with the user: **a periodic task, not a `session_usage_updated`
+subscription.** `AgentSession.on()` rejects async callbacks outright
+(`livekit/rtc/event_emitter.py:159-168`), so the event version needs a sync handler that spawns
+a task per event plus its own `monotonic()` throttle and in-flight guard. The event also fires
+once per *metric* — STT, LLM, TTS and VAD each emit separately
+(`voice/agent_activity.py:1966-1970`) — and carries nothing `session.usage` does not already
+expose on demand. A sleep loop is smaller, has no SDK coupling, and picks up the Sarvam tap and
+the native ASR tally, neither of which emits an SDK event at all.
+
+Two smaller decisions: the analytics endpoints and the webhook deliberately keep including
+non-finalized rows, because a live call's tokens are real usage and a partial `usage` block
+beats today's omitted one; and `upsert_usage_record` takes the built document rather than
+living inside `session.py`, because `_persist_usage` is a closure inside `entrypoint` that no
+test can reach.
+
+One unrelated comment was wrong and is fixed: `src/api/routes/admin.py` still called
+`total_stt_audio_duration` cascade-only, untrue since PR 2 filled it in pipeline mode.
+
+Gates: 494 tests OK, `mkdocs build --strict` clean, 15 Mermaid diagrams parse, ruff on the
+touched files reports the same 241 pre-existing violations as before the change.
+
+Manual, needs a deployment:
+
+- One normal call → exactly one row for that `room_name`, `usage_finalized: true`, numbers
+  unchanged from a pre-PR call.
+- The same call queried while it is still up (after ~20 s) → the row already exists with
+  `usage_finalized: false` and non-zero LLM tokens.
+- Kill the agent container mid-call → the row stays, `usage_finalized: false`. Before this
+  there was no row.
+- The end-of-call webhook carries `usage.usage_finalized: true`.
+
 ## Left
 
-**PR 4 — durability.**
-
-- Subscribe to `session_usage_updated` and upsert on the unique `room_name`, throttled to at
-  most one write per 15 s.
-- Make the teardown write an upsert too, which also removes the duplicate-key path when two
-  teardown routes race.
-
-**PR 5 — close out the tests and docs.** Most of this shipped with PR 1: the field-level
-tests live in `TestSummarizeUsage`, the reference page is
-`docs/reference/usage-accounting.md`, and troubleshooting has the "usage record is all
-zeros" section. Only PR 4 is still outstanding:
-
-- Per-mode coverage is now done: pipeline + Sarvam landed with PR 2
-  (`tests/test_transcript_coalescer.py::TestSarvamUsageTally`), realtime + native with PR 3
-  (`tests/test_native_stt_usage.py`).
-- The "Known gaps" section is gone from `docs/reference/usage-accounting.md`; PR 3 closed the
-  last one. What remains for PR 5 is whatever PR 4 adds.
+**PR 5 — closed, nothing left to do.** Every item shipped inside the PR that needed it: the
+field-level tests in `TestSummarizeUsage`, the per-mode coverage (PR 2
+`tests/test_transcript_coalescer.py::TestSarvamUsageTally`, PR 3
+`tests/test_native_stt_usage.py`, PR 4 `tests/test_cascade_config.py::TestUpsertUsageRecord`),
+the reference page `docs/reference/usage-accounting.md` — whose "Known gaps" section PR 3
+emptied — and the troubleshooting rows.
 
 **Follow-up left by PR 0 — the deprecated Python CLI.**
 

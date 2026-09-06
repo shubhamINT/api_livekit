@@ -26,7 +26,8 @@ from livekit.plugins.sarvam.stt import MODEL_CONFIGS as SARVAM_MODEL_CONFIGS
 from src.api.models.api_schemas import CreateAssistant, UpdateAssistant
 from src.core.agents.llm import create_llm
 from src.core.agents.stt import NativeSttModelUsage, create_stt
-from src.core.agents.usage import summarize_usage
+from src.core.agents import usage as usage_module
+from src.core.agents.usage import summarize_usage, upsert_usage_record
 from src.core.db.db_schemas import UsageRecord
 
 sys.path.append(str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -1775,6 +1776,65 @@ class TestSummarizeUsage(unittest.TestCase):
         )
         self.assertEqual(metered["stt_audio_duration"], 42.0)
         self.assertEqual(metered["llm_total_tokens"], 0)
+
+
+class TestUpsertUsageRecord(unittest.IsolatedAsyncioTestCase):
+    """The record is written repeatedly — every USAGE_FLUSH_INTERVAL_S while the call runs,
+    then once at teardown — so the write has to be idempotent on room_name."""
+
+    def _patched_upsert(self):
+        """Patch UsageRecord.find_one so the call reaches a mock instead of Mongo."""
+        upsert = mock.AsyncMock()
+        find_one = mock.Mock(return_value=SimpleNamespace(upsert=upsert))
+        return mock.patch.object(usage_module.UsageRecord, "find_one", find_one), upsert
+
+    def _record(self, **overrides):
+        fields = {
+            "room_name": "room-1",
+            "assistant_id": "a1",
+            "user_email": "someone@example.com",
+            "llm_total_tokens": 900,
+            "usage_finalized": False,
+        }
+        fields.update(overrides)
+        # Beanie is not initialized in tests, so the document cannot be constructed normally.
+        return UsageRecord.model_construct(**fields)
+
+    async def test_update_leaves_created_at_alone(self):
+        """created_at marks when the call's record first appeared. Carrying it in the
+        update would move it forward on every snapshot."""
+        patch, upsert = self._patched_upsert()
+        with patch:
+            await upsert_usage_record(self._record())
+        written = upsert.await_args.args[0]["$set"]
+        self.assertNotIn("created_at", written)
+        self.assertNotIn("id", written)
+
+    async def test_update_carries_the_counts_and_the_finalized_flag(self):
+        patch, upsert = self._patched_upsert()
+        with patch:
+            await upsert_usage_record(self._record(llm_total_tokens=1234, usage_finalized=True))
+        fields = upsert.await_args.args[0]["$set"]
+        self.assertEqual(fields["llm_total_tokens"], 1234)
+        self.assertTrue(fields["usage_finalized"])
+
+    async def test_missing_row_is_created_from_the_record_itself(self):
+        """A worker that dies mid-call must leave its first snapshot behind, so the very
+        first write has to create the row rather than fail on a missing one."""
+        patch, upsert = self._patched_upsert()
+        record = self._record()
+        with patch:
+            await upsert_usage_record(record)
+        self.assertIs(upsert.await_args.kwargs["on_insert"], record)
+
+    async def test_writing_the_same_room_twice_is_not_an_error(self):
+        """room_name is uniquely indexed. The previous insert() raised DuplicateKeyError on
+        the second teardown route; an upsert just overwrites."""
+        patch, upsert = self._patched_upsert()
+        with patch:
+            await upsert_usage_record(self._record())
+            await upsert_usage_record(self._record(usage_finalized=True))
+        self.assertEqual(upsert.await_count, 2)
 
 
 class TestStaleKnobBackfill(unittest.TestCase):

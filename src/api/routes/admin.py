@@ -285,7 +285,8 @@ async def admin_tokens_summary(
                     # Token-billed providers only; zero for character/duration billing.
                     "total_tts_tokens": {"$sum": {"$add": ["$tts_input_tokens", "$tts_output_tokens"]}},
                     "total_stt_tokens": {"$sum": {"$add": ["$stt_input_tokens", "$stt_output_tokens"]}},
-                    # Cascade mode only; zero for pipeline/realtime rows.
+                    # Zero only in Gemini realtime, and only for duration-billed STT:
+                    # token-billed providers report tokens instead.
                     "total_stt_audio_duration": {"$sum": "$stt_audio_duration"},
                     "total_call_duration_minutes": {"$sum": "$call_duration_minutes"},
                 }

@@ -13,6 +13,9 @@ This replaces the deprecated UsageCollector/UsageSummary pair. Everything is in-
 aggregation of plugin metrics, so it works on a self-hosted server with no Cloud calls.
 """
 
+from beanie.operators import Set
+
+from src.core.db.db_schemas import UsageRecord
 from src.core.logger import logger
 
 # Components that cost money. The SDK also reports eot_usage and interruption_usage, but
@@ -99,3 +102,22 @@ def summarize_usage(session, extra_usage=()) -> dict:
         "usage_schema_version": USAGE_SCHEMA_VERSION,
         "sdk_version": _sdk_version(),
     }
+
+
+async def upsert_usage_record(record: UsageRecord) -> None:
+    """Write `record` to the one row keyed by its `room_name`, creating it if it is not there.
+
+    An upsert rather than an insert because the record is now written repeatedly: a snapshot
+    every `USAGE_FLUSH_INTERVAL_S` while the call runs, then the authoritative write at
+    teardown. A worker that dies between them leaves the last snapshot behind instead of
+    nothing at all, and two teardown routes racing each other can no longer produce the
+    duplicate-key error a second `insert()` raised.
+
+    `created_at` is left out of the update so it keeps marking when the record was first
+    written rather than when the last snapshot landed; `on_insert` carries it for the write
+    that creates the row.
+    """
+    await UsageRecord.find_one({"room_name": record.room_name}).upsert(
+        Set(record.model_dump(exclude={"id", "created_at"})),
+        on_insert=record,
+    )

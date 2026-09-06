@@ -466,6 +466,9 @@ class LiveKitService:
                 "stt_input_text_tokens": usage_record.stt_input_text_tokens,
                 "stt_output_tokens": usage_record.stt_output_tokens,
                 "usage_schema_version": usage_record.usage_schema_version,
+                # False means the worker never reached teardown, so these counts are the
+                # last mid-call snapshot rather than the final total.
+                "usage_finalized": usage_record.usage_finalized,
             }
 
         payload = {

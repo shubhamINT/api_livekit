@@ -79,7 +79,8 @@ Content-Type: application/json
       "stt_input_audio_tokens": 0,
       "stt_input_text_tokens": 0,
       "stt_output_tokens": 0,
-      "usage_schema_version": 2
+      "usage_schema_version": 2,
+      "usage_finalized": true
     }
   }
 }
@@ -145,6 +146,7 @@ Content-Type: application/json
 | `data.usage.stt_input_text_tokens`  | number | Text part of `stt_input_tokens` — a subset, not additional. |
 | `data.usage.stt_output_tokens`      | number | STT output (text) tokens. Token-billed STT only. |
 | `data.usage.usage_schema_version`   | number | `2` for calls recorded from 2026-09 onwards. `1` marks an older record that carries only the non-cached LLM and TTS counts; treat its missing fields as unknown, not as zero. |
+| `data.usage.usage_finalized`        | boolean | `true` when the counts come from the write the worker makes at teardown. `false` means the worker did not get that far — the record is the last mid-call snapshot, so the counts are a floor rather than the final total. |
 
 !!! warning "Cached token counts are subsets"
     `llm_input_cached_tokens` is part of `llm_total_tokens` already, and each cached

@@ -370,6 +370,7 @@ flat `UsageRecord` fields:
 | `stt_input_tokens`, `stt_output_tokens` | token-billed STT: `openai` in `cascade`, and the Realtime API's own ASR in `pipeline` / `realtime` |
 | `stt_input_audio_tokens`, `stt_input_text_tokens` | subsets of `stt_input_tokens`, reported by the Realtime API's ASR only |
 | `model_usage`, `usage_schema_version`, `sdk_version` | all modes |
+| `usage_finalized` | all modes; `true` only on the write teardown makes — see [Usage accounting](../reference/usage-accounting.md#when-the-record-is-written) |
 
 Only a Gemini `realtime` call leaves the STT fields empty, and nothing is missing there — its
 input audio is already inside the LLM prompt tokens. The other two out-of-session paths (the

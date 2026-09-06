@@ -57,7 +57,7 @@ from src.core.agents.stt import (
     resolve_stt,
     run_sarvam_parallel_stt,
 )
-from src.core.agents.usage import summarize_usage
+from src.core.agents.usage import summarize_usage, upsert_usage_record
 from src.core.agents.utils import render_prompt
 from src.core.agents.voice_features import SilenceWatchdogController, FillerController, HoldController, InputGuardController
 from src.core.agents.tool_builder import build_tools_from_db
@@ -79,6 +79,11 @@ DEFAULT_MAX_CALL_DURATION_MINUTES = 30.0
 # last utterance can come back from whichever STT owns it. Everything after it — the queue
 # join, the usage record and the end-of-call webhook — is delayed by this much.
 END_OF_CALL_GRACE_S = 4.0
+
+# How often the usage record is rewritten while the call is still running. The teardown
+# write is the authoritative one; these snapshots exist so a worker that dies mid-call
+# leaves the tokens it already spent behind instead of nothing.
+USAGE_FLUSH_INTERVAL_S = 15.0
 
 # Fixed pause after call_answered before the greeting is sent, to let the RTP mixer and
 # egress recording finish settling. Was 2.0s (unconditional, on every Exotel call — a
@@ -412,8 +417,10 @@ async def entrypoint(ctx: JobContext):
         except Exception as e:
             logger.error(f"Failed to load tools: {e}", exc_info=True)
 
-    # Persist usage metrics at call end
-    async def _persist_usage():
+    # Persist usage metrics — every USAGE_FLUSH_INTERVAL_S while the call runs, and once
+    # more at teardown, which is the write that counts.
+    async def _persist_usage(final: bool = True):
+        nonlocal _last_usage_written
         try:
             # Two transcription paths run outside the AgentSession, so neither reaches its
             # collector: the Sarvam tap, and the ASR the OpenAI Realtime API bills separately
@@ -458,9 +465,24 @@ async def entrypoint(ctx: JobContext):
                 stt_provider=stt_billed_to,
                 call_service=telephony_provider,
                 call_duration_minutes=call_duration,
+                usage_finalized=final,
                 **metered,
             )
-            await usage.insert()
+            # call_duration_minutes grows on the wall clock, so it is left out of the
+            # comparison: including it would make every snapshot look different and write a
+            # row every 15s on a call that has gone quiet. The teardown write recomputes it,
+            # and CallRecord holds the authoritative duration either way.
+            snapshot = usage.model_dump(exclude={"id", "created_at", "call_duration_minutes"})
+            if not final and snapshot == _last_usage_written:
+                return
+            await upsert_usage_record(usage)
+            _last_usage_written = snapshot
+            if not final:
+                logger.debug(
+                    f"Usage snapshot | room={room_name} | "
+                    f"llm_tokens={usage.llm_total_tokens}"
+                )
+                return
             logger.info(
                 f"Usage persisted | room={room_name} | mode={usage.mode} | "
                 f"llm_tokens={usage.llm_total_tokens} | "
@@ -481,12 +503,18 @@ async def entrypoint(ctx: JobContext):
     # Same, for the transcription the OpenAI Realtime API runs and bills separately. Stays
     # empty in cascade, in Gemini realtime, and whenever the Sarvam tap replaces it.
     _native_usage = NativeSttUsage(model=NATIVE_TRANSCRIBE_MODEL)
+    # Last snapshot _persist_usage actually wrote, so an idle call stops rewriting the same
+    # numbers every USAGE_FLUSH_INTERVAL_S.
+    _last_usage_written: dict | None = None
     # Assigned below, once _enqueue_transcript exists. Declared here because teardown reads it.
     _user_coalescer: FinalCoalescer | None = None
 
     # Watchdog/tools stamp a reason before teardown persists it.
     _end_reason: str = "natural"
     _max_duration_task: asyncio.Task | None = None
+    # Started once the session is running; teardown cancels it so the snapshot loop can
+    # never overlap the final write.
+    _usage_task: asyncio.Task | None = None
     _teardown_started: bool = False
     # Declared here, not after wait_for_participant: the conversation_item_added handler
     # closes over it and can fire before a participant has joined.
@@ -567,6 +595,12 @@ async def entrypoint(ctx: JobContext):
             logger.warning("Timed out waiting for pending transcripts")
         transcript_worker.cancel()
         await asyncio.gather(transcript_worker, return_exceptions=True)
+        # Stopped before the final write, not after: a snapshot still in flight would race
+        # the authoritative one and could land second, leaving usage_finalized False on a
+        # call that finished cleanly.
+        if _usage_task is not None:
+            _usage_task.cancel()
+            await asyncio.gather(_usage_task, return_exceptions=True)
         await _persist_usage()
         try:
             rec = await CallRecord.find_one(CallRecord.room_name == ctx.room.name)
@@ -1273,6 +1307,17 @@ async def entrypoint(ctx: JobContext):
             mode=_stt_config.get("mode"),
             assistant_id=assistant.assistant_id,
         ))
+
+    async def _usage_flusher():
+        # ponytail: a sleep loop, not a session_usage_updated subscription. session.usage is
+        # readable at any time, the SDK event fires several times per turn and rejects async
+        # handlers, and the two STT taps that run outside the AgentSession emit no event at
+        # all. _persist_usage swallows its own exceptions, so a Mongo blip cannot kill this.
+        while True:
+            await asyncio.sleep(USAGE_FLUSH_INTERVAL_S)
+            await _persist_usage(final=False)
+
+    _usage_task = asyncio.create_task(_usage_flusher())
 
     # --- Start Instruction ---
     should_speak_first = interaction_config.speaks_first

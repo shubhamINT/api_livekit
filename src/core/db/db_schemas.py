@@ -410,6 +410,12 @@ class UsageRecord(Document):
     # 2 = every field above. Treat a version 1 row as partial, not as zero usage.
     usage_schema_version: int = 1
     sdk_version: Optional[str] = None  # livekit-agents version that produced the numbers
+    # True only on the write teardown makes. The row is also written every
+    # USAGE_FLUSH_INTERVAL_S while the call runs, so False means either the call is still in
+    # progress or the worker died before teardown: the counts are a floor, not the final
+    # bill. Rows written before 2026-09 were only ever written once, at teardown, and read
+    # False because the field did not exist — check usage_schema_version to tell them apart.
+    usage_finalized: bool = False
 
     # Telephony duration (copied from CallRecord for aggregation convenience)
     call_duration_minutes: float = 0.0

@@ -1,6 +1,6 @@
 # Usage accounting
 
-Every call writes one `UsageRecord`, keyed by `room_name`, holding the raw usage each
+Every call has one `UsageRecord`, keyed by `room_name`, holding the raw usage each
 provider will bill for. These are counts, not costs — no rate is stored anywhere, and
 nothing in the platform converts usage to money.
 
@@ -137,6 +137,41 @@ this ASR. `stt_model` separates them (`gpt-4o-mini-transcribe` here), so price o
 folds input audio into `prompt_tokens_details`, so that spend is already inside the LLM
 token counts. A Gemini `realtime` call therefore stores `stt_provider = null` and zero STT
 columns by design.
+
+## When the record is written
+
+The row is written repeatedly, always to the same `room_name`:
+
+- **Every 15 s while the call runs** (`USAGE_FLUSH_INTERVAL_S` in
+  `src/core/agents/session.py`), and skipped when none of the counts moved since the last
+  write — a call sitting on hold does not rewrite the same numbers.
+- **Once at teardown**, after the last transcript has landed. This is the authoritative
+  write, and the only one that sets `usage_finalized` to `true`.
+
+Both go through the same upsert, so the snapshots cost nothing in accuracy: each one
+overwrites the last, and the teardown write overwrites them all. `created_at` is set by the
+write that creates the row and never moves afterwards.
+
+`call_duration_minutes` is the one field a snapshot does not keep current. It grows on the
+wall clock, so it is left out of the "did anything move" comparison — otherwise every call
+would rewrite its row every 15 s whether or not it was doing anything. On a quiet call it
+therefore lags behind the real elapsed time until the teardown write recomputes it. Read
+`CallRecord` for a live duration; this field is for aggregation after the fact.
+
+`usage_finalized` tells the two apart:
+
+| `usage_finalized` | What it means |
+|---|---|
+| `true` | The call reached teardown. These are the final counts. |
+| `false`, call still in progress | A mid-call snapshot. Correct as far as it goes, still growing. |
+| `false`, call over | The worker died — crash, OOM kill, container restart — before teardown. The counts are everything the call had spent as of the last snapshot: a floor, not the bill. Up to 15 s of usage is missing, and `call_duration_minutes` stopped at the same moment. |
+
+Before this existed the last case wrote nothing at all, and the end-of-call webhook shipped
+with the `usage` block omitted entirely.
+
+The admin analytics endpoints and the webhook include every row regardless of the flag — a
+live call's tokens are real usage. Filter on `usage_finalized` yourself if you need only
+settled calls.
 
 ## Schema versions
 
