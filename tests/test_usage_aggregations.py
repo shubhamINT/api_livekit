@@ -17,3 +17,11 @@ class TestUsageAggregations(unittest.TestCase):
         pipeline = usage_totals_pipeline({"user_email": "a@example.com"})
         self.assertEqual(pipeline[0], {"$match": {"user_email": "a@example.com"}})
         self.assertEqual(pipeline[1]["$group"]["_id"], None)
+        self.assertIn("total_estimated_cost_usd", pipeline[1]["$group"])
+
+    def test_by_model_sums_entry_cost(self):
+        pipeline = usage_by_model_pipeline({})
+        self.assertEqual(
+            pipeline[2]["$group"]["total_estimated_cost_usd"],
+            {"$sum": {"$ifNull": ["$model_usage.estimated_cost_usd", 0]}},
+        )

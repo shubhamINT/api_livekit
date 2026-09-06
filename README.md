@@ -21,6 +21,8 @@ FastAPI backend plus LiveKit worker for real-time voice assistants with `pipelin
 - Tracks per-call usage via SDK metrics: LLM tokens, TTS characters, and — in `cascade` mode — STT audio duration attributed to its own stage.
 - Tracks per-model `(component, provider, model)` usage with normalized provider keys, and includes it in the end-call webhook.
 - Provides per-call usage, per-user token summaries, and per-model analytics endpoints.
+- Includes versioned estimated AI-provider cost in per-call usage, webhooks, and token analytics;
+  public-rate gaps are reported as partial pricing rather than silently treated as free.
 - Super-admin endpoints for cross-tenant analytics and token usage visibility.
 - Protects worker capacity by buffering outbound requests and limiting new job intake under higher CPU load.
 

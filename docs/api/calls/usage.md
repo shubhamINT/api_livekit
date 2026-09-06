@@ -2,6 +2,11 @@
 
 Returns the complete `UsageRecord` for one call, including `model_usage` attribution.
 
+It also returns `estimated_cost_usd`, `pricing_schema_version`, `pricing_complete`, and
+`unpriced_model_usage`. The estimate covers AI-provider public PAYG rates only. When
+`pricing_complete` is false, the total is partial. When `usage_finalized` is false, usage and
+cost are a live snapshot or crash-floor.
+
 ## Endpoint
 
 - **URL**: `/call/records/{room_name}/usage`

@@ -433,6 +433,9 @@ class LiveKitService:
         # Enrich with usage data if available
         usage_record = await UsageRecord.find_one(UsageRecord.room_name == room_name)
         if usage_record:
+            # Use Pydantic's JSON encoder for Decimal monetary fields before handing the
+            # payload to httpx, whose standard JSON encoder cannot serialize Decimal.
+            usage_json = json.loads(usage_record.model_dump_json())
             filtered_data["usage"] = {
                 "mode": usage_record.mode,
                 "call_duration_minutes": usage_record.call_duration_minutes,
@@ -472,11 +475,15 @@ class LiveKitService:
                 "stt_input_text_tokens": usage_record.stt_input_text_tokens,
                 "stt_output_tokens": usage_record.stt_output_tokens,
                 "usage_schema_version": usage_record.usage_schema_version,
-                "model_usage": usage_record.model_usage,
+                "model_usage": usage_json.get("model_usage", []),
                 "sdk_version": usage_record.sdk_version,
                 # False means the worker never reached teardown, so these counts are the
                 # last mid-call snapshot rather than the final total.
                 "usage_finalized": usage_record.usage_finalized,
+                "estimated_cost_usd": usage_json.get("estimated_cost_usd"),
+                "pricing_schema_version": usage_json.get("pricing_schema_version"),
+                "pricing_complete": usage_json.get("pricing_complete", False),
+                "unpriced_model_usage": usage_json.get("unpriced_model_usage", []),
             }
 
         payload = {

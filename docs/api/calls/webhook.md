@@ -127,7 +127,7 @@ Content-Type: application/json
 | `data.call_type`               | string  | Call direction: `outbound`, `inbound`, or `web`. |
 | `data.call_service`            | string  | Telephony provider: `exotel`, `twilio`, or `web`. |
 | `data.platform_number`         | string  | Platform's own phone number used for this call. |
-| `data.usage`                   | object  | Per-component usage metrics (if available). Raw counts, not costs. |
+| `data.usage`                   | object  | Per-component usage metrics and estimated AI-provider cost (if available). |
 | `data.usage.mode`                   | string | Runtime mode for this call: `pipeline`, `realtime` or `cascade`. See [Models & Providers](../../reference/models.md). |
 | `data.usage.call_duration_minutes` | number | Usage record's copied call duration in minutes. |
 | `data.usage.call_service` | string | Telephony service copied onto the usage record. |

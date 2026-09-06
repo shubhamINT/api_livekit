@@ -1,6 +1,7 @@
 """Shared MongoDB aggregation pipelines for usage analytics."""
 
 _MODEL_TOTAL_FIELDS = {
+    "total_estimated_cost_usd": ("estimated_cost_usd", "*"),
     "total_llm_input_audio_tokens": ("input_audio_tokens", "llm_usage"),
     "total_llm_input_text_tokens": ("input_text_tokens", "llm_usage"),
     "total_llm_input_image_tokens": ("input_image_tokens", "llm_usage"),
@@ -22,6 +23,7 @@ _MODEL_TOTAL_FIELDS = {
 }
 
 _FLAT_TOTAL_FIELDS = {
+    "total_estimated_cost_usd": "estimated_cost_usd",
     "total_llm_input_audio_tokens": "llm_input_audio_tokens",
     "total_llm_input_text_tokens": "llm_input_text_tokens",
     "total_llm_input_image_tokens": "llm_input_image_tokens",
@@ -71,7 +73,11 @@ def usage_by_model_pipeline(match: dict) -> list[dict]:
             value = {"$add": [{"$ifNull": ["$model_usage.input_tokens", 0]}, {"$ifNull": ["$model_usage.output_tokens", 0]}]}
         else:
             value = {"$ifNull": [f"$model_usage.{field}", 0]}
-        expression = {"$cond": [{"$eq": ["$model_usage.type", usage_type]}, value, 0]}
+        expression = (
+            {"$ifNull": ["$model_usage.estimated_cost_usd", 0]}
+            if usage_type == "*"
+            else {"$cond": [{"$eq": ["$model_usage.type", usage_type]}, value, 0]}
+        )
         group[output] = {"$sum": expression}
     return [
         {"$match": match},

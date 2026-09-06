@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from typing import Optional, Literal, List, Dict
+from decimal import Decimal
 from beanie import Document, Indexed
 from pydantic import BaseModel, Field, EmailStr
 from pymongo import IndexModel
@@ -404,6 +405,10 @@ class UsageRecord(Document):
     # Per (provider, model) usage, filtered to billable components. Metrics and model ids are
     # SDK-reported; provider is normalized to a stable lowercase billing-vendor key.
     model_usage: List[Dict] = Field(default_factory=list)
+    estimated_cost_usd: Optional[Decimal] = None
+    pricing_schema_version: Optional[int] = None
+    pricing_complete: bool = False
+    unpriced_model_usage: List[Dict] = Field(default_factory=list)
     # 1 = pre-2026-09 rows, which carry only the flat LLM/TTS columns and no model_usage.
     # 2 = every field above with plugin-reported provider spellings.
     # 3 = every field above with normalized model_usage providers.

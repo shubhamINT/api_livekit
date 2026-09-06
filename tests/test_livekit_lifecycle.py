@@ -1,15 +1,16 @@
-import unittest
 import json
-from datetime import datetime, timedelta, timezone
+import unittest
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import httpx
 
-from src.services.livekit import livekit_svc
-from src.services.livekit.livekit_svc import LiveKitService
 from src.core.billing import calculate_billable_duration_minutes
 from src.core.db.db_schemas import UsageRecord
+from src.services.livekit import livekit_svc
+from src.services.livekit.livekit_svc import LiveKitService
 
 
 class FakeCallRecord:
@@ -26,7 +27,7 @@ class FakeCallRecord:
         self.recording_path = None
         self.recording_egress_id = "EG_test_123"
         self.transcripts = []
-        self.started_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+        self.started_at = datetime.now(UTC) - timedelta(minutes=1)
         self.ended_at = None
         self.call_duration_minutes = None
         self.billable_duration_minutes = None
@@ -86,7 +87,7 @@ class TestLiveKitLifecycle(unittest.IsolatedAsyncioTestCase):
 
     async def test_end_call_prefers_answered_at_for_duration(self):
         svc = LiveKitService()
-        answered_at = datetime.now(timezone.utc) - timedelta(seconds=30)
+        answered_at = datetime.now(UTC) - timedelta(seconds=30)
         record = FakeCallRecord(status="answered", answered_at=answered_at)
 
         with patch("src.services.livekit.livekit_svc.CallRecord") as call_record_model:
@@ -148,7 +149,7 @@ class TestLiveKitLifecycle(unittest.IsolatedAsyncioTestCase):
             await svc.update_call_status(
                 room_name="room-1",
                 call_status="failed",
-                ended_at=datetime.now(timezone.utc),
+                ended_at=datetime.now(UTC),
                 call_duration_minutes=0,
             )
 
@@ -256,8 +257,11 @@ class TestLiveKitLifecycle(unittest.IsolatedAsyncioTestCase):
                     stt_provider="sarvam",
                     stt_model="saaras:v3",
                     stt_audio_duration=31.25,
-                    model_usage=[{"type": "stt_usage", "provider": "sarvam", "model": "saaras:v3"}],
-                    sdk_version="1.7.1",
+                     model_usage=[{"type": "stt_usage", "provider": "sarvam", "model": "saaras:v3"}],
+                     estimated_cost_usd=Decimal("0.0123"),
+                     pricing_schema_version=1,
+                     pricing_complete=True,
+                     sdk_version="1.7.1",
                     call_duration_minutes=1.0,
                     call_service="exotel",
                     tts_provider="cartesia",
@@ -287,6 +291,8 @@ class TestLiveKitLifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage["tts_characters_count"], 250)
         self.assertEqual(usage["llm_total_tokens"], 155)
         self.assertEqual(usage["llm_input_cached_text_tokens"], 60)
+        self.assertEqual(usage["estimated_cost_usd"], "0.0123")
+        self.assertTrue(usage["pricing_complete"])
         self.assertEqual(usage["usage_schema_version"], 1)
         self.assertEqual(usage["model_usage"][0]["provider"], "sarvam")
         self.assertEqual(usage["sdk_version"], "1.7.1")

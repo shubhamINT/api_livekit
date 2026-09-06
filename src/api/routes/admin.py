@@ -318,6 +318,7 @@ async def admin_tokens_by_user(
                 "$group": {
                     "_id": "$user_email",
                     "total_calls": {"$sum": 1},
+                    "total_estimated_cost_usd": {"$sum": {"$ifNull": ["$estimated_cost_usd", 0]}},
                     "total_llm_tokens": {"$sum": "$llm_total_tokens"},
                     "total_llm_input_audio_tokens": {"$sum": "$llm_input_audio_tokens"},
                     "total_llm_input_cached_tokens": {"$sum": "$llm_input_cached_tokens"},
@@ -335,6 +336,7 @@ async def admin_tokens_by_user(
                     "_id": 0,
                     "user_email": "$_id",
                     "total_calls": 1,
+                    "total_estimated_cost_usd": 1,
                     "total_llm_tokens": 1,
                     "total_llm_input_audio_tokens": 1,
                     "total_llm_input_cached_tokens": 1,
@@ -387,6 +389,7 @@ async def admin_tokens_by_assistant(
                 "$group": {
                     "_id": "$assistant_id",
                     "total_calls": {"$sum": 1},
+                    "total_estimated_cost_usd": {"$sum": {"$ifNull": ["$estimated_cost_usd", 0]}},
                     "total_llm_tokens": {"$sum": "$llm_total_tokens"},
                     "total_llm_input_audio_tokens": {"$sum": "$llm_input_audio_tokens"},
                     "total_llm_input_cached_tokens": {"$sum": "$llm_input_cached_tokens"},
@@ -404,6 +407,7 @@ async def admin_tokens_by_assistant(
                     "_id": 0,
                     "assistant_id": "$_id",
                     "total_calls": 1,
+                    "total_estimated_cost_usd": 1,
                     "total_llm_tokens": 1,
                     "total_llm_input_audio_tokens": 1,
                     "total_llm_input_cached_tokens": 1,

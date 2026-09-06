@@ -1,8 +1,9 @@
 # Usage accounting
 
-Every call has one `UsageRecord`, keyed by `room_name`, holding the raw usage each
-provider will bill for. These are counts, not costs — no rate is stored anywhere, and
-nothing in the platform converts usage to money.
+Every call has one `UsageRecord`, keyed by `room_name`, holding raw provider usage and an
+estimated AI-provider cost. The estimate uses hardcoded public PAYG rates and is not an
+invoice: negotiated discounts, credits, taxes, regional premiums, provider rounding and
+telephony/recording/LiveKit costs are excluded.
 
 The record reaches you four ways: the [end-of-call webhook](../api/calls/webhook.md), the
 [per-call usage endpoint](../api/calls/usage.md), the `usage_records` collection directly, and
@@ -19,6 +20,22 @@ needs no Cloud credentials.
 The SDK reports **one entry per `(provider, model)` pair**. Those entries are stored in
 `model_usage` and summed into the flat columns. Metrics and model ids remain SDK-reported;
 provider is normalized to one lowercase billing-vendor spelling at write time.
+
+## Estimated Cost
+
+New records contain `estimated_cost_usd`, `pricing_schema_version`, `pricing_complete`, and
+`unpriced_model_usage`. Cost is calculated at every usage snapshot and again at teardown.
+`pricing_complete=false` means at least one billable provider/model has no verified rate or
+the usage dimensions needed to price it; the call still succeeds and the known entries are
+included in the partial total. Unknown pricing is never represented as a misleading zero.
+
+Rates are versioned and static so a stored estimate remains reproducible. USD conversion for
+providers whose source price is not USD uses the fixed conversion snapshot in the rate table;
+only USD is exposed in the API. Historical schema-v1 records have no per-model source data and
+are not backfilled.
+
+`estimated_cost_usd` is also added to each priced `model_usage` entry. Analytics sums those
+entry values by model; it does not attempt to price blended flat totals.
 
 ## Read `model_usage` for pricing
 

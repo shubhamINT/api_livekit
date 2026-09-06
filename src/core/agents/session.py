@@ -57,6 +57,7 @@ from src.core.agents.stt import (
     run_sarvam_parallel_stt,
 )
 from src.core.agents.usage import summarize_usage, upsert_usage_record
+from src.core.pricing import price_model_usage
 from src.core.agents.utils import render_prompt
 from src.core.agents.voice_features import SilenceWatchdogController, FillerController, HoldController, InputGuardController
 from src.core.agents.tool_builder import build_tools_from_db
@@ -435,6 +436,15 @@ async def entrypoint(ctx: JobContext):
             if _cascade_stt_entry is not None:
                 _extra.append(_cascade_stt_entry)
             metered = summarize_usage(session, extra_usage=_extra)
+            pricing = price_model_usage(
+                metered["model_usage"],
+                pricing_context={"openai_service_tier": llm_config.get("service_tier")},
+            )
+            metered["model_usage"] = pricing.model_usage
+            metered["estimated_cost_usd"] = pricing.estimated_cost_usd
+            metered["pricing_schema_version"] = pricing.pricing_schema_version
+            metered["pricing_complete"] = pricing.pricing_complete
+            metered["unpriced_model_usage"] = pricing.unpriced_model_usage
             telephony_provider = job_metadata.get("call_service") or job_metadata.get("service")
             if job_metadata.get("call_type") == "web":
                 telephony_provider = None
@@ -496,7 +506,8 @@ async def entrypoint(ctx: JobContext):
                 f"stt={usage.stt_provider or 'none'} | "
                 f"stt_audio={usage.stt_audio_duration:.1f}s | "
                 f"stt_tokens={usage.stt_input_tokens + usage.stt_output_tokens} "
-                f"(audio={usage.stt_input_audio_tokens})"
+                f"(audio={usage.stt_input_audio_tokens}) | "
+                f"estimated_cost_usd={usage.estimated_cost_usd}"
             )
         except Exception as e:
             logger.error(f"Failed to persist usage record: {e}", exc_info=True)

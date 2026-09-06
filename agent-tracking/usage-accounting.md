@@ -471,8 +471,12 @@ replacement is `lk agent dev`, a separate binary each developer installs, so it 
 setup change rather than a code change. Nothing forces it until the SDK deletes
 `livekit/agents/cli/_legacy.py`; production no longer depends on that module.
 
-**Later, not part of this effort — pricing.**
+**Pricing follow-up — implemented.** New usage records now calculate estimated AI-provider
+cost from a versioned static public-PAYG rate table. The estimate is USD-only, excludes
+telephony/recording/LiveKit infrastructure, and remains partial when a provider/model has no
+verified public rate. Historical rows are not backfilled.
 
-A `src/core/pricing/` package with an effective-dated rate table keyed by
-`(component, provider, model, token_class)`, reading the raw `model_usage`. Rates stay out of
-the schema so a price change needs neither a migration nor a backfill.
+A `src/core/pricing/` package with a versioned rate table keyed by
+`(component, provider, model, token_class)` reads raw `model_usage`. Rate definitions stay out
+of the usage schema; `pricing_schema_version` records calculation semantics without requiring
+a rate migration or historical backfill.
