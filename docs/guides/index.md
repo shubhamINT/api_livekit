@@ -11,5 +11,6 @@ Dive in:
 
 - [Build a Meeting Connector](meeting-connector.md) — the contract a meeting connector implements:
   the dispatch name, the job metadata, the mixed audio track, the `lk.publish_on_behalf` match, the
-  four lifecycle events, and the two rules that decide whether the meeting can hear the assistant.
-  Ends with a walkthrough of building a connector for a platform other than Google Meet.
+  four lifecycle events, the two rules that decide whether the meeting can hear the assistant, when
+  `ready` may be emitted, and the teardown rules that decide whether the bot leaves. Ends with a
+  walkthrough of building a connector for a platform other than Google Meet.

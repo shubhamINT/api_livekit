@@ -2,6 +2,7 @@ import asyncio
 import logging
 import random
 from collections import deque
+from collections.abc import Awaitable, Callable
 from typing import Final
 
 from livekit.agents import AgentSession
@@ -92,12 +93,15 @@ class SilenceWatchdogController:
         self,
         session: AgentSession,
         logger: logging.Logger,
+        on_silence_exhausted: Callable[[], Awaitable[None]],
         reprompt_interval_sec: float = 10.0,
         max_reprompts: int = 2,
         use_llm_for_speech: bool = False,
     ) -> None:
         self._session = session
         self._logger = logger
+        # The owner's teardown. This controller must not end the call itself.
+        self._on_silence_exhausted = on_silence_exhausted
         self._reprompt_interval_sec = reprompt_interval_sec
         self._max_reprompts = max_reprompts
         self._use_llm_for_speech = use_llm_for_speech  # True for realtime mode (no external TTS)
@@ -171,9 +175,11 @@ class SilenceWatchdogController:
                 )
 
                 if self._reprompt_count >= self._max_reprompts:
-                    self._logger.info("[silence] ending session after repeated silence")
+                    self._logger.info("[silence] ending call after repeated silence")
+                    # Detached, never awaited: stop() below cancels this very task, and the
+                    # teardown's delete_room makes participant_disconnected cancel it again.
+                    asyncio.create_task(self._on_silence_exhausted())
                     self.stop(reset_count=True)
-                    self._session.shutdown()
                     return
 
                 self._reprompt_in_progress = True

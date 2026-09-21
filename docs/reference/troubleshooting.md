@@ -357,6 +357,65 @@ connector's browser token must grant `canSubscribe` without `hidden`.
 
 ---
 
+## The meeting never heard the greeting, but the recording has it
+
+The call looks complete everywhere you can check it. The call record is `answered` with a normal
+duration, the transcript's first assistant turn is the greeting, and the recording opens with it.
+Everything the assistant said *after* the opening was heard in the meeting normally. Only the
+opening is missing, and only for the people who were in the meeting.
+
+Neither the recording nor the transcript can settle this, because neither one observes the meeting:
+the recording is a room-composite egress of the LiveKit room, and the transcript is produced
+model-side. Both capture what the assistant published, whether or not the connector was carrying it
+into the meeting at the time.
+
+The cause is a `ready` that arrived before the connector's own microphone was live. `ready` is what
+releases the greeting, so the assistant spoke into a room the meeting was not yet listening to. The
+size of the gap is the size of whatever the connector still had to do after it reported ready —
+connecting its subscriber, waiting on a track, clicking the platform's unmute control.
+
+Confirm it from the connector's log rather than from this side: its own "microphone on" step is
+timestamped *after* the event it published as `ready`. On this side the only visible trace is that
+`Meeting connector event received | event=ready` and the first assistant turn are seconds earlier
+than the meeting's recollection of when the bot started talking.
+
+This is not something an assistant setting can fix, and re-running the call reproduces it. The
+connector must emit `ready` only once the meeting can hear it — see
+[Build a Meeting Connector](../guides/meeting-connector.md#5-emit-the-lifecycle-events), which
+states the rule and the two mistakes that usually cause it.
+
+---
+
+## The call ended but the bot is still in the meeting
+
+The picture is a call that finished correctly on this side and a bot that did not notice. Every
+signal here says success:
+
+| What you see | State |
+|---|---|
+| `CallRecord.call_status` | `completed`, with a duration and a `call_end_reason` |
+| End-call webhook | Delivered once |
+| Recording | In S3, ends where the assistant stopped talking |
+| LiveKit room | Gone |
+| The meeting's participant list | Still shows the bot, silent |
+
+That combination is not an assistant fault. Deleting the room *is* how this platform tells a
+connector the call is over, and the room is gone — so the assistant did its part and the
+connector's teardown did not run. The bot is a browser nobody closed.
+
+Two things make it linger rather than resolve on its own. The connector's alone-in-meeting timer
+cannot rescue it, because that timer only fires when the bot is the last participant and a human is
+still in the meeting. And a browser whose driver was never quit outlives the job process, so
+nothing else comes along to kill it.
+
+Fixing it is connector-side work: see
+[step 6 of the connector contract](../guides/meeting-connector.md#6-end-the-job-cleanly), which
+covers the fifteen-second shutdown window, the cleanup guard that must be set on completion rather
+than on entry, and why a final `ended` published to an already-deleted room is what usually burns
+the window.
+
+---
+
 ## An inbound caller hears silence after pickup
 
 Expected behaviour is: ringing, then the greeting. Silence *after* the ringing stops means the

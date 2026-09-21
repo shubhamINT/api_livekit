@@ -118,7 +118,7 @@ Content-Type: application/json
 | `data.sip_status_text`         | string  | SIP reason text when available for SIP-driven setup outcomes. May be `null` for generic failures/timeouts. |
 | `data.answered_at`             | string  | Timestamp when the user answered (if answered). |
 | `data.agent_ready_at`          | string  | Timestamp when the AI agent actually joined the room and started running (`session.start()` succeeded). Internal diagnostic signal — used by the dispatcher to detect a call that was answered but never got a live agent (crash, provider outage, worker overload) and end it instead of leaving it silent. `null` if the agent never became ready, or for passthrough/legacy calls (no AI agent). Not part of the stable contract — do not build required logic on it. |
-| `data.call_end_reason`         | string  | Reason the call ended. `natural` for normal user/agent hang-up, `max_duration_exceeded` when the assistant's `max_call_duration_minutes` ceiling was hit. May be `null` for legacy records created before this field existed. |
+| `data.call_end_reason`         | string  | Reason the call ended. `natural` for a normal hang-up, `end_call_tool` when the assistant's `end_call` tool fired, `silence_timeout` when the silence re-prompts ran out, `max_duration_exceeded` when the assistant's `max_call_duration_minutes` ceiling was hit. May be `null` for legacy records created before this field existed. |
 | `data.recording_path`          | string  | S3 URL of the call recording (if enabled). |
 | `data.transcripts`             | array   | List of conversation messages, ordered by `timestamp` (speaking order). Always `[]` for passthrough calls (no STT). |
 | `data.transcripts[].speaker`   | string  | Who spoke (`agent` or `user`).             |

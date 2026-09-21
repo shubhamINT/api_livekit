@@ -526,7 +526,7 @@ For the full model/provider inventory (model IDs, defaults, per-mode validity) s
 | `filler_words` | boolean | No | Enables filler words while user is speaking. Requires an external TTS — available in `pipeline` and `cascade`, not `realtime`. |
 | `silence_reprompts` | boolean | No | Enables reprompts during prolonged user silence. |
 | `silence_reprompt_interval` | number | No | Reprompt interval in seconds (1.0-60.0). Default: `10.0`. |
-| `silence_max_reprompts` | number | No | Maximum reprompts before ending session (0-5). Default: `2`. |
+| `silence_max_reprompts` | number | No | Maximum reprompts before the call is ended (0-5). Default: `2`. The call is torn down gracefully (recording, transcripts, usage and webhook all finalize) and the termination reason is reported as `silence_timeout`. |
 | `background_sound_enabled` | boolean | No | Enables background ambience. Default: `true`. |
 | `thinking_sound_enabled` | boolean | No | Enables the typing-style thinking sound. Default: `true`. |
 | `allow_interruptions` | boolean | No | If `true`, users can interrupt the assistant's initial greeting. Default: `false` (greeting is uninterruptible). |

@@ -331,6 +331,14 @@ the end-call webhook once, and tears down the room.
 The connector publishes `ended` or its job shuts down. The assistant remains the accounting owner
 and ends the room through the normal finalization path.
 
+### The assistant ends the call
+
+Every ending above is driven by the connector, but the assistant can also decide to hang up: the
+`end_call` tool fires when the participant says goodbye, the silence watchdog runs out of
+re-prompts, or `max_call_duration_minutes` is reached. All three run the same finalization path and
+delete the room, which is the connector's cue to leave the meeting. The reason is recorded on
+`CallRecord.call_end_reason` as `end_call_tool`, `silence_timeout` or `max_duration_exceeded`.
+
 ## Deployment boundary
 
 This repository creates both dispatches and owns everything about the call except the browser. It

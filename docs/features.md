@@ -63,7 +63,7 @@ Full STT/LLM/TTS model inventory, config keys, and per-mode validity: [Models & 
 - **Async queue model** — `POST /call/outbound` returns `202 Accepted` with a `queue_id` immediately; the call is placed when capacity is available
 - **Queue status polling** — `GET /call/queue/{queue_id}` returns current state: `pending → dispatching → dispatched → failed`
 - **Retry on failure** — up to 3 dispatch attempts before permanent failure
-- **End-call webhook** — configurable POST notification on call completion with full payload: duration, transcript summary, status (`completed`, `busy`, `no_answer`, `timeout`, `failed`), `call_end_reason` (`natural` or `max_duration_exceeded`), billable minutes, recording URL
+- **End-call webhook** — configurable POST notification on call completion with full payload: duration, transcript summary, status (`completed`, `busy`, `no_answer`, `timeout`, `failed`), `call_end_reason` (`natural`, `end_call_tool`, `silence_timeout` or `max_duration_exceeded`), billable minutes, recording URL
 - **Provider support**: Twilio (LiveKit-managed SIP), Exotel (custom SIP bridge)
 
 ---
@@ -181,6 +181,7 @@ Stops background noise from interrupting the agent mid-sentence. Runs in the age
 
 - Detects caller silence after configurable interval
 - Sends up to a configurable max number of reprompt messages before ending the call
+- The call is torn down through the normal finalization path — recording, transcripts, usage and webhook all finalize — and reported as `silence_timeout`
 - Configurable per-assistant: `silence_reprompt_interval`, `silence_max_reprompts`
 - Paused automatically during hold
 - Auto-disabled in text-only web calls (typed chat has no audio-silence signal)

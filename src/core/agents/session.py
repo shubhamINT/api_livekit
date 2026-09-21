@@ -727,6 +727,7 @@ async def entrypoint(ctx: JobContext):
         async def end_call(_ctx: RunContext):
             """Wait for the LLM's goodbye reply to actually finish playing, then end the call."""
             async def _end_after_goodbye():
+                nonlocal _end_reason
                 # Two different shapes, so two paths:
                 #
                 # Realtime models emit the goodbye as a NEW speech handle after the tool
@@ -756,6 +757,7 @@ async def entrypoint(ctx: JobContext):
                     finally:
                         session.off("speech_created", _on_created)
                 # small buffer for egress to finalize the tail, then teardown
+                _end_reason = "end_call_tool"
                 await _flush_and_end_call(delay=1.0)
 
             _ctx.speech_handle.add_done_callback(
@@ -1049,10 +1051,17 @@ async def entrypoint(ctx: JobContext):
     # Built here rather than inline in RoomOptions because InputGuardController mutes
     # through it. Text-only chats have no audio input, so there is nothing to gate.
     speech_gate = None if is_text_only else SpeechGate()
+    # The watchdog cannot reach transcripts, usage or the room, so it hands the call back here.
+    async def _end_call_on_silence() -> None:
+        nonlocal _end_reason
+        _end_reason = "silence_timeout"
+        await _flush_and_end_call()  # delay=0: nothing was just spoken, no TTS tail to flush
+
     silence_watchdog = (
         SilenceWatchdogController(
             session=session,
             logger=logger,
+            on_silence_exhausted=_end_call_on_silence,
             reprompt_interval_sec=interaction_config.silence_reprompt_interval,
             max_reprompts=interaction_config.silence_max_reprompts,
             use_llm_for_speech=is_realtime,

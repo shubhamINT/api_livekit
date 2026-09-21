@@ -170,7 +170,7 @@ deadlines. Publish JSON on the `meeting_connector_events` data topic, reliably:
 | Event | Emit it when | What the assistant does |
 |---|---|---|
 | `waiting` | The bot is in the meeting's waiting room. | Records it. Informational. |
-| `ready` | The bot is admitted **and** media is flowing. | Moves the call to `answered`, starts the recording, and greets. |
+| `ready` | The bot is admitted **and** the meeting can already hear whatever the assistant publishes. | Moves the call to `answered`, starts the recording, and greets. |
 | `failed` | The join failed, for any reason. | Fails the call with your `detail` as the reason. |
 | `ended` | The meeting ended, the bot was removed, or the worker is shutting down. | Finalizes the call. |
 
@@ -184,6 +184,23 @@ Emit each event once. The assistant's handling is idempotent, but a connector th
 `ready` is also what starts the recording, so a connector that reports it late delays the recording
 by the same amount — and a call that never reports it is never recorded.
 
+!!! danger "`ready` means the meeting can hear you, not that you were admitted"
+    **Emit `ready` only once your platform-side microphone is live.** The assistant greets within a
+    second or two of receiving it. Anything it says before the microphone is on is lost to the
+    meeting and to nobody else: the recording is an egress of the LiveKit room and the transcript is
+    produced model-side, so neither of them observes the meeting. Both will contain a greeting that
+    no participant heard. The operator sees a complete call with a normal opening turn, the
+    attendees see a bot that joined and said nothing, and every artifact agrees with the operator.
+
+    **Subscribing is not unmuting.** LiveKit fires no unmute event for a track that was already
+    unmuted when you subscribed, so a connector that turns its microphone on from a mute-change
+    handler alone never turns it on at all. Unmute when you wire the audio path up, and let the
+    mute-change handler carry only the changes after that.
+
+    **Do not wait for video before wiring up audio.** The assistant publishes one audio track and no
+    video, on every call. A fixed wait for a video track before the audio path is connected is dead
+    air on every meeting, and the greeting is what pays for it.
+
 !!! warning "Your waiting-room budget must be shorter than the assistant's"
     The assistant fails a call that is not ready within `MEETING_CONNECTOR_READY_TIMEOUT_SECONDS`
     (default `360`). If your own waiting-room timeout is longer, the assistant gives up first and
@@ -195,12 +212,71 @@ by the same amount — and a call that never reports it is never recorded.
 ### 6. End the job cleanly
 
 The assistant deletes the LiveKit room when the call finishes. Treat that as the normal end of your
-job: listen for the room disconnecting and shut the browser down. Shutdown callbacks cannot wake a
-blocked loop, so the Google Meet connector pushes a sentinel onto the same queue its lifecycle
-events use rather than relying on the callback alone.
+job: listen for the room disconnecting and shut the browser down. The room can go away
+**mid-meeting** — the assistant hangs up when the participant says goodbye, after repeated silence,
+or at its maximum call duration — so do not assume the room outlives the meeting. Shutdown
+callbacks cannot wake a blocked loop, so the Google Meet connector pushes a sentinel onto the same
+queue its lifecycle events use rather than relying on the callback alone.
 
-Make cleanup idempotent. It runs from both the job's shutdown callback and the entrypoint's
-`finally`, and doing it twice must not raise.
+"Shut the browser down" means two separate things: leave the meeting, then kill the process that
+was in it. Here is the Google Meet connector's teardown, as one worked example — the order is the
+part to copy, not the framework:
+
+```python
+def close(self):
+    self.stop_requested.set()
+    try:
+        self.leave()
+    finally:
+        self._quit_driver()
+        self.websocket_server.close()
+        if self.display:
+            self.display.stop()
+```
+— `connector:src/standalone_google_meet/chrome/session.py`
+
+`leave()` clicks the platform's own "Leave call" control, so the meeting shows a participant who
+left rather than one who vanished. Treat it as best-effort: the control is localised and gets
+renamed, so a connector that only clicks it will one day not leave at all. `_quit_driver()` is
+`driver.quit()`, and *that* is what actually removes the participant — which is why it sits in a
+`finally` where a missing button cannot skip it. The WebSocket server and the virtual display come
+last, after nothing needs them. Every step is safe to run when the browser never started, because
+this same teardown covers a job that failed during the join.
+
+**You get fifteen seconds.** When the room disconnects, the agents SDK waits that long for your
+entrypoint to return, then **cancels** it, and only then runs the callbacks registered through
+`ctx.add_shutdown_callback`. Every rule below follows from that order.
+
+!!! danger "The three rules that decide whether the bot actually leaves"
+    **Leaving the meeting is a separate action from losing the room.** If your page holds its own
+    LiveKit subscriber connection, that connection dying only stops the assistant's audio — the
+    page is still joined to the meeting. Something must actively leave the platform and close the
+    browser.
+
+    **Mark cleanup done on completion, not on entry.** Cleanup runs from both the entrypoint's
+    `finally` and the shutdown callback, so it needs a guard against running twice. A guard set
+    *before* the work means a cancelled first attempt permanently disarms the backstop that exists
+    for exactly that case. Remember that `except Exception` does not catch
+    `asyncio.CancelledError`.
+
+    **Never publish to a room that is already gone.** `publish_data` on a deleted room has no
+    deadline. A final `ended` published after the room disconnected spends the whole fifteen-second
+    grace and forces the cancellation that skips your teardown. The assistant already knows the
+    call is over — it deleted the room.
+
+    All three fail silently. The call finalizes correctly on this side, the webhook arrives, the
+    recording lands, and the bot stays in the meeting.
+
+Two more sit outside that window — one bites before it, one after:
+
+**A stop request during the join must abort the join, not fail it.** If your stop flag surfaces as
+an ordinary exception inside a join-retry loop, the connector relaunches the browser *after*
+cleanup has already run, and nothing owns the browser that comes back.
+
+**Kill the browser yourself.** The agents SDK kills a stuck job with a signal to the job process
+only — there is no process-group kill. A browser whose driver was never quit is reparented and
+stays in the meeting indefinitely. A container restart policy does not rescue it: the container
+never restarted, only the job did.
 
 !!! tip "Add an alone-in-meeting timer"
     Meeting platforms report "the meeting has ended" minutes after everyone leaves, and the
@@ -290,6 +366,13 @@ On the connector side, confirm that the mixed-audio level is non-zero while some
 and that the assistant's output level is non-zero while the assistant is speaking. A level that is
 non-zero *between* the assistant's turns and zero *during* them means you are carrying background
 audio and dropping speech — the mixing rule again.
+
+Those checks prove the meeting can hear. None of them can see whether the bot leaves, so end the
+call deliberately and watch the exit: say goodbye so the assistant's `end_call` tool fires, or let
+the silence re-prompts run out. Two things must then happen — the bot disappears from the meeting's
+own participant list within a few seconds, and no browser or driver process outlives the job. A bot
+that goes quiet but stays in the list is the teardown failure from
+[step 6](#6-end-the-job-cleanly), not an audio fault.
 
 [Troubleshooting](../reference/troubleshooting.md#a-meeting-call-is-silent-but-tokens-are-still-billed)
 has the full symptom table.

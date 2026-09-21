@@ -239,7 +239,7 @@ class CallRecord(Document):
     # -end calls that never get here instead of quietly occupying a slot for their full
     # duration with dead air. See outbound_dispatcher/dispatcher.py's _watch_agent_join.
     agent_ready_at: Optional[datetime] = None
-    call_end_reason: Optional[str] = None  # natural | max_duration_exceeded | sip_bye | rtp_silence | no_rtp | livekit_disconnected | error
+    call_end_reason: Optional[str] = None  # natural | end_call_tool | silence_timeout | max_duration_exceeded | sip_bye | rtp_silence | no_rtp | livekit_disconnected | error
     recording_path: Optional[str] = None
     recording_egress_id: Optional[str] = None
     transcripts: List[Dict] = []  # [{speaker, text, timestamp}]
