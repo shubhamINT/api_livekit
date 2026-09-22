@@ -128,11 +128,53 @@ SARVAM_RATES = {
     "bulbul:v3": ModelRate(character=Decimal(30) / 10000 * SARVAM_INR_TO_USD),
 }
 
+# https://cartesia.ai/pricing, checked 2026-09-22. **Derived, not quoted.** Cartesia
+# publishes plan tiers, not a per-unit price, so these come from the Startup tier: $49/month
+# buys 1.25M credits, which that page equates to about 1,667 minutes of sonic-3 speech and
+# about 115h44m of ink-2 transcription. A TTS credit is one character, so the character rate
+# is the tier price over the credits; STT is the tier price over the hours. Replace both with
+# the contract rate if this deployment has one.
+CARTESIA_TTS_RATES = {
+    "sonic-3": ModelRate(character=Decimal(49) / 1_250_000),
+}
+_CARTESIA_STT_SECOND = ModelRate(audio_second=Decimal(49) / (Decimal("115.7333") * 3600))
+CARTESIA_STT_RATES = {
+    "ink-2": _CARTESIA_STT_SECOND,
+    "ink-whisper": _CARTESIA_STT_SECOND,
+}
+
+# https://mistral.ai/pricing/api, checked 2026-09-22. The page names the model "Voxtral TTS"
+# at $0.016 per 1K characters; the ids below are what `GET /v1/models` actually serves and
+# what `tts/factory.py` sends.
+MISTRAL_TTS_RATES = {
+    "voxtral-mini-tts-2603": ModelRate(character=Decimal("0.016") / 1000),
+}
+
+# https://ai.google.dev/gemini-api/docs/pricing, checked 2026-09-22. Paid tier.
+# The three 3.x Live models share one price block; 2.5 native audio is its own, cheaper on
+# text and the same on audio. Thinking tokens bill as output text, so no separate rate.
+# Cached input carries the uncached rate: Google publishes no Live API cache discount,
+# so the estimate is high rather than free.
+_GEMINI_3X_LIVE = _realtime("3.00", ".75", "3.00", ".75", "12.00", "4.50", "1.00")
+GEMINI_LIVE_RATES = {
+    "gemini-3.8-live": _GEMINI_3X_LIVE,
+    "gemini-3.8-live-extended-thinking": _GEMINI_3X_LIVE,
+    "gemini-3.1-flash-live-preview": _GEMINI_3X_LIVE,
+    "gemini-2.5-flash-native-audio-preview-12-2025": _realtime(
+        "3.00", ".50", "3.00", ".50", "12.00", "2.00", "3.00"
+    ),
+}
+
+# https://deepgram.com/pricing, checked 2026-09-22. Streaming, pay-as-you-go, **regular**
+# price — the page currently quotes a lower promotional rate on three of these (nova-3
+# $0.0048, nova-3-multilingual $0.0058, flux-general-en $0.0065). The regular price is used
+# on purpose: a promotion ends without warning, and an estimate that is a little high is
+# recoverable where one that is 40% low is not.
 DEEPGRAM_RATES = {
-    "nova-3": ModelRate(audio_second=Decimal("0.0048") / 60),
-    "nova-3-general": ModelRate(audio_second=Decimal("0.0048") / 60),
-    "nova-3-multilingual": ModelRate(audio_second=Decimal("0.0058") / 60),
-    "flux-general-en": ModelRate(audio_second=Decimal("0.0065") / 60),
+    "nova-3": ModelRate(audio_second=Decimal("0.0077") / 60),
+    "nova-3-general": ModelRate(audio_second=Decimal("0.0077") / 60),
+    "nova-3-multilingual": ModelRate(audio_second=Decimal("0.0092") / 60),
+    "flux-general-en": ModelRate(audio_second=Decimal("0.0077") / 60),
     "flux-general-multi": ModelRate(audio_second=Decimal("0.0078") / 60),
 }
 
@@ -140,11 +182,18 @@ DEEPGRAM_RATES = {
 def get_rate(component: str, provider: str, model: str) -> ModelRate | None:
     tables = {
         ("llm_usage", "openai"): {**OPENAI_RATES, **OPENAI_REALTIME_RATES},
+        # "Gemini" is what the plugin reports for an API-key session, lowercased by
+        # `normalize_provider`. A Vertex session would say "Vertex AI", which this deployment
+        # cannot open — it never passes `vertexai=True`.
+        ("llm_usage", "gemini"): GEMINI_LIVE_RATES,
         ("stt_usage", "openai"): OPENAI_STT_RATES,
         ("tts_usage", "elevenlabs"): ELEVENLABS_TTS_RATES,
         ("stt_usage", "elevenlabs"): ELEVENLABS_STT_RATES,
         ("stt_usage", "sarvam"): SARVAM_RATES,
         ("tts_usage", "sarvam"): SARVAM_RATES,
         ("stt_usage", "deepgram"): DEEPGRAM_RATES,
+        ("tts_usage", "cartesia"): CARTESIA_TTS_RATES,
+        ("stt_usage", "cartesia"): CARTESIA_STT_RATES,
+        ("tts_usage", "mistral"): MISTRAL_TTS_RATES,
     }
     return tables.get((component, provider), {}).get(model)

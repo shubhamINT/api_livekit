@@ -39,7 +39,7 @@ Update an existing assistant. Only send fields you want to change.
 - `assistant_llm_config.api_key` overrides the system key for the selected provider (`OPENAI_API_KEY` or `GOOGLE_API_KEY`). Omit `assistant_llm_config` to use system keys + mode default provider.
 - You can update `assistant_llm_config` alone (without re-sending `assistant_mode` or TTS fields) and the existing TTS config is preserved.
 - In `realtime` mode, `assistant_llm_config` is required only when switching into realtime; it defaults to `provider="gemini"`.
-- Defaults when fields are omitted — Gemini: `model="gemini-2.5-flash-native-audio-preview-12-2025"`, `voice="Puck"`; OpenAI realtime: `model="gpt-realtime-1.5"`, `voice="marin"`.
+- Defaults when fields are omitted — Gemini: `model="gemini-3.8-live"`, `voice="Puck"`; OpenAI realtime: `model="gpt-realtime-1.5"`, `voice="marin"`.
 
 ## Switching Modes
 
@@ -178,7 +178,7 @@ Update an existing assistant. Only send fields you want to change.
 - Switching to `pipeline` or `cascade` requires TTS fields **only if no TTS config exists in DB**. If the assistant previously had a TTS config, it is preserved and reused — you do not need to re-send it.
 - In `cascade` mode, `assistant_stt_model` must be `sarvam`, `cartesia`, `deepgram`, `elevenlabs` or `openai` (`native` returns `400`/`422`), and `assistant_llm_config.provider` must be `openai` or omitted.
 - The mode rules are re-checked against the **stored** assistant, not just the request. A PATCH that switches mode is judged on the merged result, so `{"assistant_mode": "cascade"}` against a row that still holds `provider: "gemini"` or a non-allowlisted `model` returns `400` — send the corrected `assistant_llm_config` in the same request.
-- `assistant_llm_config.model` is validated per mode: an OpenAI realtime ID in `pipeline`/`realtime`, an allowlisted chat model in `cascade`, one of the three Gemini **Live** IDs for `provider: "gemini"`. `assistant_llm_config.voice` is validated per vendor. In cascade mode the model is additionally checked against what your OpenAI account still serves.
+- `assistant_llm_config.model` is validated per mode: an OpenAI realtime ID in `pipeline`/`realtime`, an allowlisted chat model in `cascade`, one of the five Gemini **Live** IDs for `provider: "gemini"`. `assistant_llm_config.voice` is validated per vendor. In cascade mode the model is additionally checked against what your OpenAI account still serves.
 - In `cascade` mode, `temperature`, `reasoning_effort` and `verbosity` are validated **against the model** — including the model already stored, so a PATCH that changes only the model is rejected (`400`) when a knob on the row does not fit the new one. Clear the knob in the same request. Which model reads which: [Cascade LLM knobs](../../reference/compatibility.md#cascade-llm-knobs).
 
     ```json title="Stored assistant"

@@ -33,53 +33,20 @@ SARVAM_STT_MODELS = frozenset({"saaras:v3", "saaras:v4"})
 # a model rather than letting the default ride.
 CARTESIA_STT_MODELS = frozenset({"ink-whisper", "ink-2"})
 
-# livekit.plugins.deepgram.models.DeepgramModels + V2Models, plus the two bare family aliases
-# below. Deepgram resolves `nova-2` and `nova-3` server-side to the -general variant, this
-# platform's docs advertise `nova-2`, and the plugin's Literal happens to list `nova-3` but not
-# `nova-2` — an inconsistency in their Literal, not in the API.
-DEEPGRAM_FAMILY_ALIASES = frozenset({"nova-2", "nova"})
-DEEPGRAM_STT_MODELS = (
-    frozenset(
-        {
-            "base",
-            "conversationalai",
-            "enhanced-finance",
-            "enhanced-general",
-            "enhanced-meeting",
-            "enhanced-phonecall",
-            "finance",
-            "flux-general-en",
-            "flux-general-multi",
-            "meeting",
-            "nova-2-atc",
-            "nova-2-automotive",
-            "nova-2-conversationalai",
-            "nova-2-drivethru",
-            "nova-2-finance",
-            "nova-2-general",
-            "nova-2-medical",
-            "nova-2-meeting",
-            "nova-2-phonecall",
-            "nova-2-video",
-            "nova-2-voicemail",
-            "nova-3",
-            "nova-3-general",
-            "nova-3-medical",
-            "nova-3-multilingual",
-            "nova-general",
-            "nova-meeting",
-            "nova-phonecall",
-            "phonecall",
-            "video",
-            "voicemail",
-            "whisper-base",
-            "whisper-large",
-            "whisper-medium",
-            "whisper-small",
-            "whisper-tiny",
-        }
-    )
-    | DEEPGRAM_FAMILY_ALIASES
+# A deliberate subset of `livekit.plugins.deepgram.models.DeepgramModels` + `V2Models`, not
+# the whole Literal: the nova-3 and flux lines, the ones Deepgram still prices (checked 2026-09-22,
+# https://deepgram.com/pricing). The nova-2, enhanced, base and hosted-whisper tiers still run
+# at Deepgram but are off the price list, and this platform prices every call it accepts —
+# accepting a model with no rate bills it as zero, which reads like a free call rather than an
+# unpriced one. `nova-3` is the bare family alias Deepgram resolves to `nova-3-general`.
+DEEPGRAM_STT_MODELS = frozenset(
+    {
+        "nova-3",
+        "nova-3-general",
+        "nova-3-multilingual",
+        "flux-general-en",
+        "flux-general-multi",
+    }
 )
 
 # livekit.plugins.elevenlabs.stt.ElevenLabsSTTModels. Only scribe_v2_realtime streams; the

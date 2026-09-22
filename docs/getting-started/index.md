@@ -40,7 +40,7 @@ LLM config rules:
 - `pipeline`: `assistant_llm_config` is optional (defaults to `provider="openai"`, `model="gpt-realtime-1.5"`). `api_key` overrides the system `OPENAI_API_KEY`; `voice` is ignored because the external TTS produces the audio.
 - `realtime`: `assistant_llm_config` is required, but `provider`, `model` and `voice` may be omitted to use defaults.
 - `cascade`: `provider` must be `openai` and `model` must be one of the allowlisted chat models.
-- Defaults — Gemini realtime: `model="gemini-2.5-flash-native-audio-preview-12-2025"`, `voice="Puck"`; OpenAI realtime: `model="gpt-realtime-1.5"`, `voice="marin"`. Both `model` and `voice` are validated: only the three Gemini Live models are accepted, and the Gemini and OpenAI voice rosters are not interchangeable.
+- Defaults — Gemini realtime: `model="gemini-3.8-live"`, `voice="Puck"`; OpenAI realtime: `model="gpt-realtime-1.5"`, `voice="marin"`. Both `model` and `voice` are validated: only the five Gemini Live models are accepted, and the Gemini and OpenAI voice rosters are not interchangeable.
 
 !!! warning "Gemini works in `realtime` mode only"
     `provider: "gemini"` is rejected with a `422` in `pipeline` and `cascade` mode. Google's Live API
@@ -90,7 +90,7 @@ curl -X POST "https://api-livekit-vyom.indusnettechnologies.com/assistant/create
     "assistant_mode": "realtime",
     "assistant_llm_config": {
       "provider": "gemini",
-      "model": "gemini-2.5-flash-native-audio-preview-12-2025",
+      "model": "gemini-3.8-live",
       "voice": "Puck"
     },
     "assistant_interaction_config": {

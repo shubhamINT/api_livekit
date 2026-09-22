@@ -91,7 +91,6 @@ from src.core.model_support.capabilities import (
     DEFAULT_GEMINI_LIVE_MODEL,
     DEFAULT_GEMINI_VOICE,
     DEFAULT_REALTIME_MODEL,
-    GEMINI_NO_MIDSESSION_CONTENT_MODELS,
     realtime_supports_truncation,
 )
 from src.core.pricing import price_model_usage
@@ -868,24 +867,8 @@ async def entrypoint(ctx: JobContext):
     elif is_realtime:
         # Full realtime mode: single model handles STT + LLM + TTS (audio out).
         if realtime_provider == "gemini":
-            _gemini_model = llm_config.get("model") or DEFAULT_GEMINI_LIVE_MODEL
-            # The 3.1 Live model answers `send_client_content` with a 1007 close after the
-            # first model turn, so `generate_reply()` is ignored from then on. Two features
-            # here go through it: the max-duration farewell and the silence re-prompt. The
-            # greeting is unaffected — it is sent as realtime *input*, not client content.
-            # Not a rejection, because everything else about the model works; a log line
-            # instead, so the missing farewell is traceable to a choice rather than a bug.
-            # https://docs.livekit.io/agents/models/realtime/plugins/gemini/#gemini-3-1-compatibility
-            if _gemini_model in GEMINI_NO_MIDSESSION_CONTENT_MODELS:
-                logger.warning(
-                    "Gemini Live model %s ignores generate_reply() after the first turn — the "
-                    "max-duration farewell and silence re-prompts will not be spoken on this "
-                    "call. Use %s to keep them.",
-                    _gemini_model,
-                    DEFAULT_GEMINI_LIVE_MODEL,
-                )
             llm = google_realtime.RealtimeModel(
-                model=_gemini_model,
+                model=llm_config.get("model") or DEFAULT_GEMINI_LIVE_MODEL,
                 voice=llm_config.get("voice") or DEFAULT_GEMINI_VOICE,
                 modalities=["AUDIO"],
                 instructions=assistant.assistant_prompt,

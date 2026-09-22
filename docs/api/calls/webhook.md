@@ -92,7 +92,7 @@ Content-Type: application/json
        "stt_output_tokens": 0,
        "model_usage": [{"type": "llm_usage", "provider": "openai", "model": "gpt-4.1-mini", "input_tokens": 9250, "output_tokens": 1230}],
        "usage_schema_version": 3,
-       "sdk_version": "1.7.1",
+       "sdk_version": "1.8.2",
       "usage_finalized": true
     }
   }

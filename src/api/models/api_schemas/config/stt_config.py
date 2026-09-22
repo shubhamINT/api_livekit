@@ -69,10 +69,10 @@ class DeepgramSTTConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["deepgram"] = "deepgram"
-    model: str = Field("nova-3", max_length=40, description="Deepgram STT model: nova-3 (default — multilingual, 45 languages), nova-2, flux-general-en (English only) or flux-general-multi (multilingual).")
-    language: Optional[str] = Field(None, max_length=10, description="Language — any BCP-47 code ('en-US', 'hi-IN'), or 'multi' to auto-detect per segment. A 3-letter code such as 'hin' is rejected and ignored. Omitting this auto-detects on nova-3 and flux-general-multi ('multi', billed at a higher per-minute rate); nova-2 and flux-general-en cannot detect and stay on 'en-US'. On the flux models this becomes a language_hint, which flux-general-multi alone accepts.")
+    model: str = Field("nova-3", max_length=40, description="Deepgram STT model: nova-3 (default — multilingual, 45 languages), nova-3-general, nova-3-multilingual, flux-general-en (English only) or flux-general-multi (multilingual). The nova-2, enhanced, base and whisper tiers are no longer accepted.")
+    language: Optional[str] = Field(None, max_length=10, description="Language — any BCP-47 code ('en-US', 'hi-IN'), or 'multi' to auto-detect per segment. A 3-letter code such as 'hin' is rejected and ignored. Omitting this auto-detects on nova-3 and flux-general-multi ('multi', billed at a higher per-minute rate); flux-general-en cannot detect and stays on 'en-US'. On the flux models this becomes a language_hint, which flux-general-multi alone accepts.")
     enable_diarization: bool = Field(False, description="Enable speaker diarization (nova models).")
-    keyterm: Optional[Union[str, List[str]]] = Field(None, max_length=200, description="One or more terms to boost recognition (nova-3 / flux). Nova-2 uses keywords instead.")
+    keyterm: Optional[Union[str, List[str]]] = Field(None, max_length=200, description="One or more terms to boost recognition (nova-3 / flux).")
     api_key: ProviderApiKey = Field(None, min_length=1, max_length=500, description="Deepgram API key (optional, falls back to system DEEPGRAM_API_KEY).")
 
     @field_validator("model", mode="after")

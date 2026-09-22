@@ -1,6 +1,23 @@
 # Plan 05 — Add Gemini 3.8 Live models (`gemini-3.8-live`, `gemini-3.8-live-extended-thinking`)
 
-Status: **planned, not started** (2026-09-21). Research done against live sources; no code changed.
+Status: **implemented** (2026-09-22). Every ticket below (T1–T6) has landed; the findings are
+kept because they are the sourcing for the code that now exists.
+
+Two deviations from the plan as written, both agreed during execution:
+
+- **`docker/requirements-agent.txt:7`** carried the same `~=1.7.1` pin as `pyproject.toml:13`
+  and was missed by T1. Both are now `~=1.8.2`. `docker/requirements-control.txt` is untouched —
+  the control image has no `livekit-agents`.
+- **Pricing landed in code, not only in the docs.** `src/core/pricing/rates.py` had no Gemini
+  table at all, so every Gemini realtime call record came back `pricing_complete: false`.
+  `GEMINI_LIVE_RATES` now prices all five ids under the `gemini` and `vertex ai` billing keys
+  (`normalize_provider` lowercases what the plugin reports: `"Gemini"` for an API-key session,
+  `"Vertex AI"` for a service-account one). Cached input carries the uncached rate — Google
+  publishes no Live API cache discount, so the estimate is high rather than free.
+
+The one item **not** done is the optional live smoke call at the end of T6: it needs a real
+`GOOGLE_API_KEY` and a placed call.
+
 Requester asked for "the latest gemini 3.8 model … with proper pricings and everything so users can use it."
 
 ## Verified findings (research summary)
@@ -21,13 +38,18 @@ The plugin's `LiveAPIModels` literal in `api_proto.py` now lists five ids:
 | `gemini-3.8-live` | Stable (2026-09-15) | Google's recommended default for low-latency voice agents. Interleaved reasoning, **async function calling**, **full mid-session client-content updates** (`generate_reply()`, `update_instructions()`, `update_chat_ctx()` all work). 131,072 input / 65,536 output tokens. |
 | `gemini-3.8-live-extended-thinking` | Stable | High-reasoning audio-to-audio variant for complex multi-step voice agents; **async-only** function calling; designed to mask tool latency. |
 | `gemini-3.1-flash-live-preview` | Preview | Already allowlisted here. Its mid-session-update breakage is **fixed in `livekit-plugins-google>=1.8.2`** (LiveKit docs: "On current plugin versions, `generate_reply()`, `update_instructions()`, and `update_chat_ctx()` all work with 3.1 models"). Remaining 3.1 caveats we don't use anyway: no affective dialog, no proactive audio, `thinkingLevel` instead of `thinkingBudget`. |
-| `gemini-2.5-flash-native-audio-preview-12-2025` | Preview | Current default (`DEFAULT_GEMINI_LIVE_MODEL`, `src/core/model_support/capabilities.py:218`). |
+| `gemini-2.5-flash-native-audio-preview-12-2025` | Preview | Was the default before this plan landed; still allowlisted. |
 | `gemini-live-2.5-flash-native-audio` | GA, **Vertex-only** | Already allowlisted here; unusable with a plain `GOOGLE_API_KEY` (plugin's `_validate_model_api_match` raises `ValueError`). Out of scope. |
 
 Plugin-internal 3.8 handling (`realtime_api.py`) we inherit for free:
-`MODELS_WITHOUT_REPLY_PLACEHOLDER = ("3.1", "3.8")` and
-`MODELS_DEFAULT_NON_BLOCKING = ("3.8",)` — the plugin skips the `.` reply placeholder and
-defaults tools to `NON_BLOCKING` on 3.8 models. No factory change needed.
+`MODELS_WITHOUT_REPLY_PLACEHOLDER = ("3.1", "3.8")` — the plugin skips the `.` reply
+placeholder on 3.8 models. No factory change needed.
+
+**Correction (2026-09-22, after implementation):** this section also claimed
+`MODELS_DEFAULT_NON_BLOCKING = ("3.8",)`. No such symbol exists in
+`livekit-plugins-google` 1.8.2; tool behaviour is left unset and Gemini applies its own
+per-model default. What that means for the extended-thinking model is tracked in
+`agent-tracking/plan-tracking/06-gemini-3.8-open-questions.md`.
 
 ### Pricing (official Google pricing page, Standard paid tier, per 1M tokens)
 

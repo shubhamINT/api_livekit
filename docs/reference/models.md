@@ -17,7 +17,7 @@ Both modes route through a realtime model — `pipeline` uses it in text-only mo
 | Field | Values | Default |
 |---|---|---|
 | `provider` | `openai` in `pipeline` mode (`gemini` is rejected — see [Compatibility Matrix](compatibility.md#mode-llm-provider)); `gemini` or `openai` in `realtime` mode | `gemini` in `realtime` mode, `openai` in `pipeline` mode |
-| `model` | **Both validated.** OpenAI: one of `REALTIME_MODELS`. Gemini: one of the three `GEMINI_LIVE_MODELS` — the Live API is a much smaller set than the Gemini chat models, and a chat id such as `gemini-2.5-flash` opens a socket the API then closes | `gemini-2.5-flash-native-audio-preview-12-2025` (gemini), `gpt-realtime-1.5` (openai) |
+| `model` | **Both validated.** OpenAI: one of `REALTIME_MODELS`. Gemini: `gemini-3.8-live`, `gemini-3.8-live-extended-thinking`, `gemini-3.1-flash-live-preview` or `gemini-2.5-flash-native-audio-preview-12-2025` (the plugin also lists `gemini-live-2.5-flash-native-audio`, which is Vertex-only and rejected). The Live API is a much smaller set than the Gemini chat models, and a chat id such as `gemini-2.5-flash` opens a socket the API then closes | `gemini-3.8-live` (gemini), `gpt-realtime-1.5` (openai) |
 | `voice` | Validated per vendor: the 30-name Gemini Live roster for `gemini`; for `openai`, anything that is not a Gemini name | `Puck` (gemini), `marin` (openai). **Honored only in `realtime` mode** — `pipeline` mode emits text, so voice is meaningless there and the field is silently ignored. |
 | `api_key` | string | falls back to system `GOOGLE_API_KEY` / `OPENAI_API_KEY` |
 
@@ -31,13 +31,44 @@ longer accepted at all — probed on 2026-08-13, the account does not serve eith
 row can still hold one, so the rule remains. See
 [Runtime Modes → LLM Context Truncation](../architecture/runtime-modes.md#llm-context-truncation).
 
-!!! warning "The Gemini default moved off `gemini-3.1-flash-live-preview`"
-    3.1 restricts `send_client_content` to initial history seeding: after the first model turn it
-    ignores `generate_reply()`, `update_instructions()` and `update_chat_ctx()`. On this platform
-    that silently disables the **max-duration farewell** and **silence re-prompts** — the greeting
-    still works, because it is sent as realtime *input*. The default is therefore
-    `gemini-2.5-flash-native-audio-preview-12-2025`, where all three work. 3.1 is still
-    selectable and logs a warning naming what will not be spoken.
+!!! note "Which Gemini Live model to pick"
+    The default is **`gemini-3.8-live`** — the stable low-latency line Google names for voice
+    agents, and the one every platform feature works on (greeting, max-duration farewell,
+    silence re-prompts, agent handoff).
+
+    **`gemini-3.8-live-extended-thinking`** reasons before it speaks. It is the choice for
+    complex multi-step agents and it trades first-token latency for that; its function calling
+    is asynchronous only, which is how it masks tool latency. Nothing rejects it — expect a
+    slower first word.
+
+    **`gemini-3.1-flash-live-preview`** is still selectable. Its mid-session limitation (a 1007
+    close on `send_client_content` after the first model turn, which silently dropped the
+    farewell and re-prompts) was a **plugin** bug, fixed in `livekit-plugins-google` 1.8.2 —
+    the version this platform pins. On older deployments the symptom is back; see
+    [Troubleshooting](troubleshooting.md#gemini-live-mid-session-updates).
+
+    **`gemini-live-2.5-flash-native-audio`** is the Vertex AI id and is **rejected with a
+    `422`**. The plugin lists it, but raises
+    `ValueError: … is a VertexAI model, but vertexai=False` while building the model,
+    and this deployment authenticates with `GOOGLE_API_KEY`. Accepted, it would be a call that
+    connects and then loses its worker before the first word.
+
+### Gemini Live pricing
+
+Google's public list price, paid tier, per 1M tokens
+([pricing](https://ai.google.dev/gemini-api/docs/pricing), checked 2026-09-22). Estimated
+per-call cost uses these numbers — see the `estimated_cost_usd` field on the usage record.
+
+| Model | Input text | Input audio | Input image/video | Output text | Output audio |
+|---|---|---|---|---|---|
+| `gemini-3.8-live` | $0.75 | $3.00 (≈$0.005/min) | $1.00 (≈$0.002/min) | $4.50 | $12.00 (≈$0.018/min) |
+| `gemini-3.8-live-extended-thinking` | $0.75 | $3.00 | $1.00 | $4.50 | $12.00 |
+| `gemini-3.1-flash-live-preview` | $0.75 | $3.00 | $1.00 | $4.50 | $12.00 |
+| `gemini-2.5-flash-native-audio-preview-12-2025` | $0.50 | $3.00 | $3.00 | $2.00 | $12.00 |
+
+Thinking tokens bill as output text, so extended-thinking costs more per turn than its row
+suggests. Search grounding is billed separately by Google: 5,000 free requests per month
+shared across Gemini 3.x models, then $14 per 1,000 requests.
 
 Native user-transcription (`assistant_stt_model="native"`, pipeline mode only) uses OpenAI
 `gpt-4o-mini-transcribe` regardless of which realtime provider is selected.
@@ -155,7 +186,7 @@ don't always agree, see the quirks below.
     set (`src/core/model_support/speech.py`) and a value outside it is a `422`:
 
     ```json
-    { "detail": "'deepgram' does not have a STT model called 'nova-9' — choose one of: base, flux-general-en, flux-general-multi, nova, nova-2, … See docs/reference/models.md." }
+    { "detail": "'deepgram' does not have a STT model called 'nova-9' — choose one of: flux-general-en, flux-general-multi, nova-3, nova-3-general, nova-3-multilingual. See docs/reference/models.md." }
     ```
 
     These fields used to accept any string under 40 characters, so a typo was stored happily and
@@ -169,7 +200,7 @@ don't always agree, see the quirks below.
 |---|---|---|---|
 | `sarvam` | `pipeline` (default), `cascade` | `saaras:v3` (also `saaras:v4`) | `language` default `unknown` (auto-detect); `mode` default `codemix` (also `transcribe`, `translate`, `verbatim`, `translit`; honoured in both pipeline and cascade) |
 | `cartesia` | `cascade` only | `ink-whisper` (43 languages) or `ink-2` (English only) | `language` fixed ISO 639-1, no auto-detect, default `en` |
-| `deepgram` | `cascade` only | `nova-3` (multilingual, 45 languages); also `nova-2`, `flux-general-en` (English), `flux-general-multi` | `language` BCP-47 or `multi` (auto-detect; omitted — `multi` on `nova-3` / `flux-general-multi`, `en-US` on the rest); `enable_diarization` (bool, default `false` — omitted stays **off**, never force-enabled); `keyterm` (string or list — omitted — not sent, no biasing); `api_key` falls back to system `DEEPGRAM_API_KEY` |
+| `deepgram` | `cascade` only | `nova-3` (multilingual, 45 languages); also `nova-3-general`, `nova-3-multilingual`, `flux-general-en` (English), `flux-general-multi` | `language` BCP-47 or `multi` (auto-detect; omitted — `multi` on `nova-3` / `flux-general-multi`, `en-US` on the rest); `enable_diarization` (bool, default `false` — omitted stays **off**, never force-enabled); `keyterm` (string or list — omitted — not sent, no biasing); `api_key` falls back to system `DEEPGRAM_API_KEY` |
 | `elevenlabs` | `cascade` only | `scribe_v2_realtime` (auto-detects ~190 languages); also `scribe_v2`, `scribe_v1` | `language_code` **ISO 639-3** (`eng`, `hin`) — omit to auto-detect; `no_verbatim` (bool, default `false` — omitted keeps fillers); `api_key` falls back to system `ELEVENLABS_API_KEY` — the same variable the ElevenLabs TTS provider uses |
 | `openai` | `cascade` only (in `pipeline` it collapses to `native`) | `gpt-4o-mini-transcribe`; also `gpt-4o-transcribe`, `whisper-1` | `language` ISO 639-1 — omitting it turns on `detect_language` rather than pinning English; `detect_language` (bool, default `false`) turns on auto-detect and overrides `language`; `prompt` (whisper-1 only); `noise_reduction_type` (`near_field` / `far_field`); `use_realtime` (bool, default **`true`** — streams over the realtime transcription socket; `false` is accepted only with `whisper-1`); `api_key` falls back to system `OPENAI_API_KEY` — the same variable the cascade LLM uses |
 | `native` | `pipeline` only — rejected in `cascade` (no realtime model to self-transcribe) | n/a (the conversational LLM transcribes itself: `gpt-4o-mini-transcribe`) | no config |
@@ -211,7 +242,7 @@ provider (cartesia / deepgram / elevenlabs) degrades to native transcription wit
 | `cartesia` | `model` | `ink-whisper` (pinned in factory) | 43-language STT model | `ink-2` is English only; the factory pins the model explicitly so the plugin's own default flip can't bite |
 | `cartesia` | `language` | `en` | exactly one fixed language — **no auto-detect** | ISO 639-1 only (`en`, `hi`) — a BCP-47 code like `en-US` is rejected and logged, and the default is used; omitted means `en` |
 | `cartesia` | `api_key` | system `CARTESIA_API_KEY` | auth | override wins; both missing → **pipeline** degrades to `native` (warning), **cascade** aborts |
-| `deepgram` | `model` | `nova-3` | multilingual, 45 languages | `nova-2`, `flux-general-en` (English only), `flux-general-multi`; omitted keeps the default |
+| `deepgram` | `model` | `nova-3` | multilingual, 45 languages | `nova-3-general`, `nova-3-multilingual`, `flux-general-en` (English only), `flux-general-multi`; omitted keeps the default |
 | `deepgram` | `language` | `multi` on `nova-3` / `flux-general-multi`, else `en-US` | `multi` = auto-detect; BCP-47 = fixed | BCP-47 (`en-US`, `hi-IN`) or `multi` — a 3-letter code like `hin` is rejected and logged; omitted auto-detects wherever the model can, which is billed at a higher rate |
 | `deepgram` | `enable_diarization` | `false` | label each utterance with its speaker (nova models) | `true` turns it on; **omitted stays `false`, never force-enabled** |
 | `deepgram` | `keyterm` | not sent | bias recognition toward a term | a string/list biases recognition (`nova-3`/`flux` only); **omitted — the key is not sent, no biasing** |
@@ -243,9 +274,11 @@ These are the easy-to-miss traps. All statements match the plugin behaviour in L
   a harder failure than any wrong language code elsewhere on this page. Both are therefore
   validated first: a bad language falls back to `unknown` (auto-detect), an unsupported
   `mode` is dropped so the model uses its own default. Both are logged.
-- **`keyterm` (Deepgram) is ignored on `nova-2`.** Nova-2 uses a different keyword mechanism
-  (`keywords` keyword pairs), not `keyterm`. Sending `keyterm` with `model: "nova-2"` does nothing.
-  It is honoured by `nova-3` and both `flux` models only.
+- **The Deepgram allowlist is the priced set, not the whole plugin.** Only the `nova-3` line and
+  the two `flux` models are accepted. Deepgram stopped publishing a price for the `nova-2`,
+  `enhanced`, `base` and hosted-`whisper` tiers, and this platform prices every call it accepts,
+  so those ids are a `422`. Accepted: `nova-3`, `nova-3-general`, `nova-3-multilingual`,
+  `flux-general-en`, `flux-general-multi`.
 - **`enable_diarization` is meaningful only on **nova** models.** Pairing it with `flux-general-en` /
   `flux-general-multi` logs a warning and is dropped; omitting it never force-enables diarization.
 - **The two Deepgram families use different APIs, and the factory picks for you.** `nova-*` runs on

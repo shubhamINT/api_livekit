@@ -172,7 +172,7 @@ For the full model/provider inventory (model IDs, defaults, per-mode validity) s
     | Field | Type | Required | Description |
     | :--- | :--- | :--- | :--- |
     | `provider` | string | No | LLM vendor for audio-out realtime. `gemini` (default) or `openai`. |
-    | `model` | string | No | Provider model, **validated**. Gemini: one of `gemini-2.5-flash-native-audio-preview-12-2025` (default), `gemini-live-2.5-flash-native-audio`, `gemini-3.1-flash-live-preview` — a Gemini *chat* id such as `gemini-2.5-flash` is a `422`. OpenAI: a realtime id, default `gpt-realtime-1.5`. |
+    | `model` | string | No | Provider model, **validated**. Gemini: one of `gemini-3.8-live` (default), `gemini-3.8-live-extended-thinking`, `gemini-3.1-flash-live-preview`, `gemini-2.5-flash-native-audio-preview-12-2025` — a Gemini *chat* id such as `gemini-2.5-flash`, or the Vertex-only `gemini-live-2.5-flash-native-audio`, is a `422`. OpenAI: a realtime id, default `gpt-realtime-1.5`. |
     | `voice` | string | No | Voice for the audio-out model. Gemini default: `Puck`; OpenAI default: `marin`. |
     | `api_key` | string | No | Optional per-assistant provider key. Falls back to system `GOOGLE_API_KEY` / `OPENAI_API_KEY`. |
 
@@ -201,7 +201,7 @@ For the full model/provider inventory (model IDs, defaults, per-mode validity) s
         "assistant_mode": "realtime",
         "assistant_llm_config": {
           "provider": "gemini",
-          "model": "gemini-2.5-flash-native-audio-preview-12-2025",
+          "model": "gemini-3.8-live",
           "voice": "Puck"
         }
       }'
@@ -253,10 +253,10 @@ For the full model/provider inventory (model IDs, defaults, per-mode validity) s
 
         | Field | Type | Required | Description |
         | :--- | :--- | :--- | :--- |
-        | `model` | string | No | Deepgram STT model. Default: `nova-3` (multilingual, 45 languages). Also `nova-2`, `flux-general-en` (English only) and `flux-general-multi` (multilingual). |
-        | `language` | string | No | BCP-47 code (`en-US`, `hi-IN`), or `multi` to auto-detect per segment. A 3-letter code such as `hin` is an ElevenLabs code and is rejected. When omitted: `multi` on `nova-3` / `flux-general-multi`, `en-US` on `nova-2` / `flux-general-en`, which cannot detect. `multi` bills at a higher per-minute rate. On the flux models this is sent as `language_hint` and only `flux-general-multi` reads it. |
+        | `model` | string | No | Deepgram STT model. Default: `nova-3` (multilingual, 45 languages). Also `nova-3-general`, `nova-3-multilingual`, `flux-general-en` (English only) and `flux-general-multi` (multilingual). The `nova-2`, `enhanced`, `base` and `whisper` tiers are rejected — Deepgram no longer publishes a price for them. |
+        | `language` | string | No | BCP-47 code (`en-US`, `hi-IN`), or `multi` to auto-detect per segment. A 3-letter code such as `hin` is an ElevenLabs code and is rejected. When omitted: `multi` on `nova-3` / `flux-general-multi`, `en-US` on `flux-general-en`, which cannot detect. `multi` bills at a higher per-minute rate. On the flux models this is sent as `language_hint` and only `flux-general-multi` reads it. |
         | `enable_diarization` | boolean | No | Labels each utterance with a speaker id. Default: `false`. When omitted, diarization stays off — it is never force-enabled. Nova models only. |
-        | `keyterm` | string or array of strings | No | Boosts recognition of a term. When omitted it is not sent (no biasing). `nova-3` / `flux` only — `nova-2` does not take keyterm. |
+        | `keyterm` | string or array of strings | No | Boosts recognition of a term. When omitted it is not sent (no biasing). `nova-3` / `flux` only. |
         | `api_key` | string | No | Optional Deepgram API key. Falls back to system `DEEPGRAM_API_KEY`. |
 
     === "ElevenLabs (auto-detect)"
@@ -283,7 +283,7 @@ For the full model/provider inventory (model IDs, defaults, per-mode validity) s
     > **Don't assume all STT providers auto-detect when `language`/`language_code` is omitted.**
     > ElevenLabs auto-detects, but Deepgram and OpenAI fall back to `en` (not `multi`), and
     > `flux-general-en` is
-    > English-only. `keyterm` is ignored on `nova-2`, `enable_diarization` is nova-only, OpenAI's
+    > English-only. `enable_diarization` is nova-only, OpenAI's
     > `prompt` works on `whisper-1` only, and a pinned
     > ElevenLabs `language_code` disables auto-detect. Full list:
     > [STT pitfalls & what not to combine](../../reference/models.md#stt-pitfalls-what-not-to-combine).

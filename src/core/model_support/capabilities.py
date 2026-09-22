@@ -149,29 +149,26 @@ def realtime_supports_truncation(model: str) -> bool:
 
 # ── Gemini realtime (realtime mode only) ─────────────────────────────────────────────
 # There is no `/v1/models` equivalent to ask, so this list is the gate. Straight from
-# `livekit.plugins.google.realtime.api_proto.LiveAPIModels` in livekit-agents 1.6.7 — the Live
+# `livekit.plugins.google.realtime.api_proto.LiveAPIModels` in livekit-agents 1.8.2 — the Live
 # API is a small, slow-moving set, unlike the Gemini chat models.
 #
 # A non-Live Gemini id (`gemini-2.5-flash`, say) is not rejected by the plugin: it opens a
 # WebSocket that the API closes, and the job ends with no audio. Hence the allowlist.
 GEMINI_LIVE_MODELS = frozenset(
     {
-        "gemini-live-2.5-flash-native-audio",
+        "gemini-3.8-live",
+        "gemini-3.8-live-extended-thinking",
         "gemini-3.1-flash-live-preview",
         "gemini-2.5-flash-native-audio-preview-12-2025",
     }
 )
 
-# Gemini 3.1 restricts `send_client_content` to initial history seeding: after the first model
-# turn it answers with a 1007 close, and `generate_reply()`, `update_instructions()` and
-# `update_chat_ctx()` are ignored with a warning.
-# https://docs.livekit.io/agents/models/realtime/plugins/gemini/#gemini-3-1-compatibility
-#
-# Both features this platform builds on top of a realtime model go through those calls, so on
-# 3.1: `speaks_first` greetings never reach the model, and agent handoff cannot change the
-# instructions. Which is why this is a set and not a comment — the API refuses the
-# combination instead of shipping an assistant that silently does not greet.
-GEMINI_NO_MIDSESSION_CONTENT_MODELS = frozenset({"gemini-3.1-flash-live-preview"})
+# The plugin's Literal carries one more id than the set above: a Vertex-only model that raises
+# while being built unless `vertexai=True`, which this GOOGLE_API_KEY deployment never sets. It
+# is named here rather than allowed, so the API can say why. Together the two sets equal the
+# plugin's Literal, which a test asserts — this module cannot import the plugin itself (the
+# control image has no livekit-agents).
+GEMINI_VERTEX_ONLY_MODELS = frozenset({"gemini-live-2.5-flash-native-audio"})
 
 # The Gemini Live voice roster, from the same plugin module (`api_proto.Voice`). Closed set,
 # 30 names, and worth enforcing for one specific reason: it shares a config field with the
@@ -215,7 +212,7 @@ GEMINI_VOICES = frozenset(
 
 # What Gemini realtime runs when the assistant names no model. Kept next to the sets above so
 # the API validates the model the call will actually use.
-DEFAULT_GEMINI_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
+DEFAULT_GEMINI_LIVE_MODEL = "gemini-3.8-live"
 
 # What Gemini realtime speaks with when the assistant names no voice.
 DEFAULT_GEMINI_VOICE = "Puck"

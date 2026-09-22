@@ -64,7 +64,7 @@ Fetch full configuration for one assistant.
     "assistant_mode": "realtime",
     "assistant_llm_config": {
       "provider": "gemini",
-      "model": "gemini-2.5-flash-native-audio-preview-12-2025",
+      "model": "gemini-3.8-live",
       "voice": "Puck",
       "api_key": "Using System provided API Key"
     },

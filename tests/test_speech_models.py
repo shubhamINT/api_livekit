@@ -19,7 +19,6 @@ from typing import get_args
 
 from src.core.model_support.speech import (
     CARTESIA_STT_MODELS,
-    DEEPGRAM_FAMILY_ALIASES,
     DEEPGRAM_STT_MODELS,
     ELEVENLABS_STT_MODELS,
     ELEVENLABS_TTS_MODELS,
@@ -54,13 +53,33 @@ class TestSTTModelSetsMatchThePlugins(unittest.TestCase):
 
         self.assertEqual(CARTESIA_STT_MODELS, literal_values(STTModels))
 
-    def test_deepgram_covers_the_plugin_and_nothing_unexplained(self):
+    def test_deepgram_is_a_subset_of_the_plugin_with_nothing_invented(self):
+        """Unlike the other providers this one is a deliberate subset, not plugin parity.
+
+        Deepgram stopped publishing a price for the nova-2, enhanced, base and hosted-whisper
+        tiers, and this platform prices every call it accepts. So the allowlist is the set
+        Deepgram still quotes — anything outside it is refused at the API rather than run at
+        an unknown cost.
+        """
         from livekit.plugins.deepgram.models import DeepgramModels, V2Models
 
         plugin = literal_values(DeepgramModels) | literal_values(V2Models)
-        self.assertEqual(plugin - DEEPGRAM_STT_MODELS, set(), "plugin ids missing here")
-        # The only ids we add are the bare family aliases Deepgram resolves server-side.
-        self.assertEqual(DEEPGRAM_STT_MODELS - plugin, set(DEEPGRAM_FAMILY_ALIASES))
+        self.assertEqual(DEEPGRAM_STT_MODELS - plugin, set(), "ids the plugin cannot run")
+
+    def test_every_allowlisted_deepgram_model_has_a_rate(self):
+        """The reason the set is a subset: an accepted model with no rate bills as zero."""
+        from src.core.pricing.rates import get_rate
+
+        for model in DEEPGRAM_STT_MODELS:
+            with self.subTest(model=model):
+                self.assertIsNotNone(get_rate("stt_usage", "deepgram", model))
+
+    def test_a_retired_deepgram_tier_is_refused(self):
+        for model in ("nova-2", "nova-2-phonecall", "enhanced-general", "base", "whisper-large"):
+            with self.subTest(model=model):
+                self.assertIsNotNone(
+                    unsupported_speech_model_reason("deepgram", model, stage="stt")
+                )
 
     def test_elevenlabs(self):
         from livekit.plugins.elevenlabs.stt import ElevenLabsSTTModels

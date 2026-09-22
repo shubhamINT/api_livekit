@@ -112,15 +112,54 @@ What changed, in the order a request meets it:
    reasoning-with-tools rule.
 4. **STT/TTS model ids and Sarvam speakers are allowlisted** (`model_support/speech.py`), and a
    provider with no key at all is refused instead of failing at job start.
-5. **Gemini Live models and realtime voices are validated.** Only three Live models exist; the
-   Gemini and OpenAI voice rosters share no names. The Gemini default moved to
-   `gemini-2.5-flash-native-audio-preview-12-2025`, because `gemini-3.1-flash-live-preview`
-   ignores `generate_reply()` after the first turn (no farewell, no silence re-prompts).
+5. **Gemini Live models and realtime voices are validated.** The Live API is a five-id set; the
+   Gemini and OpenAI voice rosters share no names. (The default has since moved again — see the
+   Gemini 3.8 section below.)
 
 Three scripts carry the diagnosis: `check_model_allowlist.py` (is our list still true),
 `audit_assistant_models.py` (which stored rows are stale), `replay_cascade_request.py <id>
 --bisect` (why OpenAI refused, over HTTPS where the error has detail). Operator-facing version:
 `docs/reference/troubleshooting.md`.
+
+## Recent changes — Gemini 3.8 Live (2026-09)
+
+`livekit-agents` is pinned to `~=1.8.2` (was `~=1.7.1`), in `pyproject.toml` **and**
+`docker/requirements-agent.txt`. Three things follow from it:
+
+1. **Two new Live models are allowlisted**, straight from the 1.8.2 plugin Literal:
+   `gemini-3.8-live` and `gemini-3.8-live-extended-thinking`. `GEMINI_LIVE_MODELS` is derived
+   from that Literal by a parity test — a plugin bump that adds a model fails the suite until
+   the allowlist follows.
+2. **The Gemini default is now `gemini-3.8-live`** (was
+   `gemini-2.5-flash-native-audio-preview-12-2025`). Assistants that omit `model` move with it.
+   Extended-thinking is selectable and reasons before speaking: slower first word, async-only
+   function calling, nothing rejects it.
+3. **The 3.1 mid-session guard is gone.** `GEMINI_NO_MIDSESSION_CONTENT_MODELS` and the warning
+   in `session.py` documented a **plugin** bug that `livekit-plugins-google` 1.8.2 fixes
+   upstream: `generate_reply()`, `update_instructions()` and `update_chat_ctx()` now work on
+   every Live model. Do not reintroduce the set; the remedy for the old symptom is the version
+   pin, and `docs/reference/troubleshooting.md` keeps the symptom documented that way.
+
+Two rules followed from the same audit:
+
+4. **`gemini-live-2.5-flash-native-audio` is refused at the API** (`GEMINI_VERTEX_ONLY_MODELS`).
+   It is in the plugin's Literal, so `GEMINI_LIVE_MODELS` keeps it for parity, but the plugin
+   raises while building the model unless `vertexai=True` — which this deployment never sets.
+   Accepted, it was a call that connected and then lost its worker.
+5. **The Deepgram STT allowlist is now a deliberate subset**, not plugin parity: the `nova-3`
+   line plus the two `flux` models. Deepgram stopped publishing a price for `nova-2`,
+   `enhanced`, `base` and hosted `whisper`, and this platform prices every call it accepts.
+   `tests/test_speech_models.py` asserts subset-of-plugin **and** that every accepted id has a
+   rate — do not re-add an id without a price.
+
+Pricing gained `GEMINI_LIVE_RATES`, `CARTESIA_TTS_RATES`, `CARTESIA_STT_RATES` and
+`MISTRAL_TTS_RATES` in `src/core/pricing/rates.py`, so every provider this platform runs is
+priced. Gemini is keyed under `gemini`, which is what the plugin reports for an API-key
+session once `normalize_provider` lowercases it. Two numbers are weaker than the
+rest and say so beside themselves: Cartesia is **derived** from its plan tiers (it quotes no
+per-unit price), and Deepgram is priced at its **regular** rate while the page shows a
+promotional one. Open questions from this work:
+`agent-tracking/plan-tracking/06-gemini-3.8-open-questions.md`.
 
 ## Recent changes — the assistants' TTS + cascade LLM knobs (2026-08)
 
@@ -196,7 +235,7 @@ a second one.
 - **Three model allowlists** (all in `src/core/model_support/capabilities.py`):
   `REALTIME_MODELS` (pipeline + realtime, OpenAI), `GEMINI_LIVE_MODELS` (realtime, Gemini) and
   `OPENAI_CASCADE_MODELS` (cascade). They do not overlap. Gemini IDs are no longer free-form —
-  only three Live models exist and a chat id fails at connect with nothing naming the cause.
+  only five Live models exist and a chat id fails at connect with nothing naming the cause.
 - **`extra="forbid"` is now on every provider config** — all five STT shapes and all
   four TTS shapes, not just some. A typo is a `422`.
 - **Missing API keys are checked before the plugin is constructed** in *both* factories.

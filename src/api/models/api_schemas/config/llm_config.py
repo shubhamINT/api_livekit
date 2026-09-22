@@ -5,7 +5,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.core.model_support.capabilities import (
     CASCADE_MODELS,
     DEFAULT_CASCADE_MODEL,
+    DEFAULT_GEMINI_LIVE_MODEL,
     GEMINI_LIVE_MODELS,
+    GEMINI_VERTEX_ONLY_MODELS,
     GEMINI_VOICES,
     REALTIME_MODELS,
     unsupported_knob_reason,
@@ -226,6 +228,14 @@ def validate_mode_config(mode, llm_config, stt_model, *, has_tools: bool = False
         # Gemini id is not refused by the plugin — it opens a socket the API closes, and the
         # job ends with no audio and nothing that names the cause.
         if provider == "gemini" or provider is None:
+            if model and model in GEMINI_VERTEX_ONLY_MODELS:
+                raise ValueError(
+                    f"assistant_llm_config.model '{model}' runs on Vertex AI only, and this "
+                    "deployment authenticates with a GOOGLE_API_KEY. The worker would refuse "
+                    "it at job start, after the call connects. Use "
+                    f"'{DEFAULT_GEMINI_LIVE_MODEL}' or another Gemini API Live model: "
+                    f"{', '.join(sorted(GEMINI_LIVE_MODELS))}."
+                )
             if model and model not in GEMINI_LIVE_MODELS:
                 raise ValueError(
                     f"assistant_llm_config.model '{model}' is not a Gemini Live model — "

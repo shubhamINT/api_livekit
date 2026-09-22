@@ -203,7 +203,9 @@ ends. Most are now refused at create/update time instead:
 | A Sarvam STT model the vendor has sunset (`saaras:v2.5`, `saarika:v2.5`) | `422` — migrate to `saaras:v3` or `saaras:v4`; `scripts/audit_assistant_models.py` finds stored assistants still holding one |
 | A `bulbul:v2` Sarvam speaker (`anushka`, `manisha`, …) on the pinned `bulbul:v3` | `422` — v2 and v3 share no speaker names |
 | `assistant_stt_model: "native"` in cascade mode | `422` — there is no realtime model to self-transcribe |
-| A Gemini chat model (`gemini-2.5-flash`) in realtime mode | `422` — only the three Live models can hold a session |
+| A Gemini chat model (`gemini-2.5-flash`) in realtime mode | `422` — only the four Gemini API Live models can hold a session |
+| `gemini-live-2.5-flash-native-audio` in realtime mode | `422` — Vertex AI only; the worker would refuse it after the call connects |
+| A retired Deepgram tier (`nova-2`, `enhanced-general`, `base`, `whisper-large`) | `422` — Deepgram publishes no price for them, so the platform cannot bill the call |
 | A Gemini voice (`Puck`) under `provider: "openai"`, or the reverse | `422` — the two rosters share no names |
 
 If a job still dies at start, the log line names the stage. `create_llm`, `create_stt` and
@@ -212,29 +214,27 @@ you should see is one `ERROR` line, not a traceback.
 
 ---
 
-## Realtime mode: no greeting, or no farewell
+## Realtime mode: no farewell, no silence re-prompt (Gemini Live mid-session updates) { #gemini-live-mid-session-updates }
 
-`gemini-3.1-flash-live-preview` restricts `send_client_content` to initial history seeding.
-After the first model turn it rejects it, and `generate_reply()`, `update_instructions()` and
-`update_chat_ctx()` are ignored with a warning
+Symptom: on a Gemini Live call the greeting is spoken, the conversation works, but the
+**max-duration farewell** and **silence re-prompts** are silent, and an agent handoff cannot
+change the instructions. The call still ends on time; it just ends without a word.
+
+Cause: the plugin closed the session with a 1007 error on `send_client_content` after the first
+model turn, so `generate_reply()`, `update_instructions()` and `update_chat_ctx()` were dropped.
+The greeting is unaffected because it is sent as realtime *input*, not client content.
+
+Fix: **upgrade `livekit-agents` to 1.8.2 or later** (`livekit-plugins-google` 1.8.2 carries the
+fix). On 1.8.2+ all three calls work on every Live model, including
+`gemini-3.1-flash-live-preview`
 ([LiveKit docs](https://docs.livekit.io/agents/models/realtime/plugins/gemini/#gemini-3-1-compatibility)).
-
-On this platform that means, on 3.1 only:
-
-- the **max-duration farewell** is not spoken (the call still ends on time);
-- **silence re-prompts** are not spoken;
-- agent handoff cannot change instructions mid-session.
-
-The greeting is unaffected — it is sent as realtime *input*, not client content.
-
-The default Gemini Live model is therefore `gemini-2.5-flash-native-audio-preview-12-2025`,
-where all of the above work. Selecting 3.1 is allowed and logs:
+Check what the worker is actually running:
 
 ```
-WARNING  Gemini Live model gemini-3.1-flash-live-preview ignores generate_reply() after the
-         first turn — the max-duration farewell and silence re-prompts will not be spoken on
-         this call.
+uv run python -c "import livekit.agents as a; print(a.__version__)"
 ```
+
+Anything below `1.8.2` reproduces the symptom regardless of which model is configured.
 
 ---
 

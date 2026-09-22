@@ -26,6 +26,10 @@ caller hears silence. Nothing surfaces until someone complains, so this finds th
 default for its mode (gpt-4.1 in cascade, gpt-realtime-1.5 in pipeline/realtime). It never
 touches the API key, the knobs, or any other field, and it never guesses a replacement model.
 
+The same scan covers the STT model, which can go stale the same way — the Deepgram allowlist
+lost the nova-2, enhanced, base and whisper tiers when Deepgram stopped publishing a price for
+them. There `--apply` unsets `assistant_stt_config.model`, falling back to `nova-3`.
+
 Exit code is 1 when anything unusable was found, so it works as a post-deploy check.
 """
 
@@ -47,6 +51,7 @@ from src.core.model_support.capabilities import (  # noqa: E402
     REALTIME_MODELS,
 )
 from src.core.model_support.openai_live import available_models  # noqa: E402
+from src.core.model_support.speech import unsupported_speech_model_reason  # noqa: E402
 
 
 def expected_models(mode: str, provider: str | None) -> tuple[frozenset[str], str]:
@@ -63,6 +68,7 @@ def resolve_provider(mode: str, llm_config: dict) -> str:
 
 
 async def run(collection, *, apply: bool, servable: frozenset[str] | None) -> int:
+    """One pass over the collection, checking both model fields an assistant can hold."""
     scanned = affected = 0
 
     async for doc in collection.find({}):
@@ -70,34 +76,44 @@ async def run(collection, *, apply: bool, servable: frozenset[str] | None) -> in
         mode = doc.get("assistant_mode") or "pipeline"
         llm_config = doc.get("assistant_llm_config") or {}
         model = llm_config.get("model")
-        if not model:
-            continue  # runs the default, which is allowlisted by construction
-
         provider = resolve_provider(mode, llm_config)
         allowed, default_model = expected_models(mode, provider)
 
+        # A field left unset runs the documented default, which is allowlisted by construction.
         problems = []
-        if model not in allowed:
-            problems.append("not on this platform's supported list")
-        # The live list covers OpenAI only; Gemini has no equivalent endpoint.
-        if servable is not None and provider == "openai" and model not in servable:
-            problems.append("not served by the OpenAI account for the system key")
+        if model:
+            if model not in allowed:
+                problems.append("not on this platform's supported list")
+            # The live list covers OpenAI only; Gemini has no equivalent endpoint.
+            if servable is not None and provider == "openai" and model not in servable:
+                problems.append("not served by the OpenAI account for the system key")
 
-        if not problems:
+        stt_provider = doc.get("assistant_stt_model")
+        stt_model = (doc.get("assistant_stt_config") or {}).get("model")
+        stt_reason = unsupported_speech_model_reason(stt_provider, stt_model, stage="stt")
+
+        if not problems and not stt_reason:
             continue
 
         affected += 1
         active = "" if doc.get("assistant_is_active", True) else "  [inactive]"
         print(f"  {doc.get('assistant_id')}  mode={mode} provider={provider}{active}")
-        print(f"      model={model!r}: {'; '.join(problems)}")
-        print(f"      clearing it would fall back to {default_model!r}")
+        if problems:
+            print(f"      model={model!r}: {'; '.join(problems)}")
+            print(f"      clearing it would fall back to {default_model!r}")
+        if stt_reason:
+            print(f"      stt={stt_provider} model={stt_model!r}: {stt_reason}")
+            print("      clearing it would fall back to that provider's default")
 
         if apply:
-            await collection.update_one(
-                {"_id": doc["_id"]}, {"$unset": {"assistant_llm_config.model": ""}}
-            )
+            unset = {}
+            if problems:
+                unset["assistant_llm_config.model"] = ""
+            if stt_reason:
+                unset["assistant_stt_config.model"] = ""
+            await collection.update_one({"_id": doc["_id"]}, {"$unset": unset})
 
-    verb = "Cleared the model on" if apply else "Would clear the model on"
+    verb = "Cleared a model on" if apply else "Would clear a model on"
     print(f"\n{verb} {affected} of {scanned} assistant(s).")
     if affected and not apply:
         print("Re-run with --apply to write, or set a specific model per assistant instead.")

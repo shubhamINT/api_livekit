@@ -17,7 +17,7 @@ from src.core.model_support.capabilities import (
     DEFAULT_GEMINI_LIVE_MODEL,
     DEFAULT_GEMINI_VOICE,
     GEMINI_LIVE_MODELS,
-    GEMINI_NO_MIDSESSION_CONTENT_MODELS,
+    GEMINI_VERTEX_ONLY_MODELS,
     GEMINI_VOICES,
     REALTIME_TRUNCATION_MODELS,
     realtime_supports_truncation,
@@ -76,12 +76,19 @@ class TestRealtimeTruncationSupport(unittest.TestCase):
 class TestGeminiLiveModelRules(unittest.TestCase):
     """Gemini has no /v1/models to ask, so the plugin's own Literal is the only gate."""
 
-    def test_the_allowlist_matches_the_installed_plugin(self):
-        """A model outside the plugin's Literal opens a socket the API then closes."""
+    def test_the_allowlist_accounts_for_every_model_the_plugin_lists(self):
+        """A model outside the plugin's Literal opens a socket the API then closes.
+
+        Every id the plugin knows is either runnable here or named as Vertex-only; an id the
+        plugin adds later belongs to neither set, and this fails until someone places it.
+        """
         from livekit.plugins.google.realtime.api_proto import LiveAPIModels
         from typing import get_args
 
-        self.assertEqual(GEMINI_LIVE_MODELS, set(get_args(LiveAPIModels)))
+        self.assertEqual(
+            GEMINI_LIVE_MODELS | GEMINI_VERTEX_ONLY_MODELS, set(get_args(LiveAPIModels))
+        )
+        self.assertEqual(GEMINI_LIVE_MODELS & GEMINI_VERTEX_ONLY_MODELS, set())
 
     def test_the_voice_roster_matches_the_installed_plugin(self):
         from livekit.plugins.google.realtime.api_proto import Voice
@@ -89,13 +96,63 @@ class TestGeminiLiveModelRules(unittest.TestCase):
 
         self.assertEqual(GEMINI_VOICES, set(get_args(Voice)))
 
-    def test_the_default_live_model_is_allowlisted_and_keeps_generate_reply(self):
+    def test_the_default_live_model_is_allowlisted(self):
         """The default has to be the model where every feature works, not the newest one."""
         self.assertIn(DEFAULT_GEMINI_LIVE_MODEL, GEMINI_LIVE_MODELS)
-        self.assertNotIn(DEFAULT_GEMINI_LIVE_MODEL, GEMINI_NO_MIDSESSION_CONTENT_MODELS)
 
     def test_the_default_voice_is_on_the_roster(self):
         self.assertIn(DEFAULT_GEMINI_VOICE, GEMINI_VOICES)
+
+    def test_both_gemini_3_8_models_are_accepted_in_realtime_mode(self):
+        """3.8 is the line Google recommends for voice agents, and the new default."""
+        for model in ("gemini-3.8-live", "gemini-3.8-live-extended-thinking"):
+            with self.subTest(model=model):
+                validate_mode_config(
+                    "realtime",
+                    SimpleNamespace(provider="gemini", model=model, voice="Puck"),
+                    None,
+                )
+
+    def test_a_gemini_3_8_model_is_rejected_outside_realtime_mode(self):
+        """Pipeline and cascade drive OpenAI, so a Live id is refused as an OpenAI model.
+
+        `provider="openai"` is what those two modes resolve to, including when the field is
+        omitted — the point is that the id cannot reach a session, not which branch says so.
+        """
+        for mode in ("pipeline", "cascade"):
+            for model in ("gemini-3.8-live", "gemini-3.8-live-extended-thinking"):
+                with self.subTest(mode=mode, model=model), self.assertRaises(ValueError):
+                    validate_mode_config(
+                        mode,
+                        SimpleNamespace(provider="openai", model=model, voice=None),
+                        None,
+                    )
+
+    def test_the_default_live_model_is_the_3_8_stable_line(self):
+        self.assertEqual(DEFAULT_GEMINI_LIVE_MODEL, "gemini-3.8-live")
+
+    def test_the_vertex_only_model_is_refused(self):
+        """It is in the plugin's Literal, so it passes parity — and then kills the job.
+
+        `RealtimeModel(model="gemini-live-2.5-flash-native-audio")` raises at construction
+        unless `vertexai=True`, which this deployment never sets (it authenticates with
+        GOOGLE_API_KEY). Accepted at create, the assistant connects and the worker dies
+        before a word is spoken.
+        """
+        with self.assertRaises(ValueError) as ctx:
+            validate_mode_config(
+                "realtime",
+                SimpleNamespace(
+                    provider="gemini", model="gemini-live-2.5-flash-native-audio", voice="Puck"
+                ),
+                None,
+            )
+        self.assertIn("Vertex AI", str(ctx.exception))
+
+    def test_the_vertex_only_set_matches_the_plugin(self):
+        from livekit.plugins.google.realtime.realtime_api import KNOWN_VERTEXAI_MODELS
+
+        self.assertEqual(GEMINI_VERTEX_ONLY_MODELS, set(KNOWN_VERTEXAI_MODELS))
 
     def test_a_chat_model_is_rejected_in_realtime_mode(self):
         with self.assertRaises(ValueError) as ctx:

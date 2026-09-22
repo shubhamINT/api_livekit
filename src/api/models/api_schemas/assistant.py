@@ -103,7 +103,7 @@ class CreateAssistant(BaseModel):
                         "assistant_mode": "realtime",
                         "assistant_llm_config": {
                             "provider": "gemini",
-                            "model": "gemini-3.1-flash-live-preview",
+                            "model": "gemini-3.8-live",
                             "voice": "Puck",
                         },
                     },

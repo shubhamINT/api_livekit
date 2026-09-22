@@ -13,8 +13,8 @@ from src.core.config import settings
 from src.core.logger import logger
 from src.core.model_support.speech import OPENAI_STT_DURATION_BILLED_MODELS
 
-# Deepgram models that can auto-detect. The nova-2 and flux-general-en families cannot, so
-# an unpinned language there stays on Deepgram's own documented default.
+# Deepgram models that can auto-detect. The flux-general-en family cannot, so an unpinned
+# language there stays on Deepgram's own documented default.
 _DEEPGRAM_AUTODETECT_MODELS = ("nova-3", "flux-general-multi")
 
 
@@ -173,8 +173,8 @@ def create_stt(assistant, usage: CascadeSttUsage | None = None):
             )
         # nova-3 is the multilingual default (45 languages; 'multi' auto-detects per
         # segment). Unpinned means auto-detect wherever the model can do it — 'multi' is
-        # billed at a higher per-minute rate, so pin a language to avoid that. nova-2 and
-        # the -en model families cannot detect, so they stay on Deepgram's own default.
+        # billed at a higher per-minute rate, so pin a language to avoid that. The -en
+        # model families cannot detect, so they stay on Deepgram's own default.
         default_language = (
             DEEPGRAM_MULTI
             if deepgram_model.startswith(_DEEPGRAM_AUTODETECT_MODELS)

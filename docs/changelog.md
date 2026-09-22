@@ -12,6 +12,71 @@ Given how this platform is used, that includes anything that changes **what a ca
 
 ---
 
+## 1.5.0
+
+Gemini 3.8 Live, a new Gemini default, and a pricing sweep that changed which Deepgram models
+this platform accepts.
+
+### The default Gemini Live model is now `gemini-3.8-live`
+
+`livekit-agents` moves from `~=1.7.1` to `~=1.8.2`, which is where Google's 3.8 Live line
+arrives. Two new models are accepted in `realtime` mode:
+
+- **`gemini-3.8-live`** — stable, the line Google names for low-latency voice agents, and the
+  new default.
+- **`gemini-3.8-live-extended-thinking`** — reasons before it speaks. Slower first word, async
+  function calling only. Selectable, never forced.
+
+**An assistant that stores no `assistant_llm_config.model` moves from
+`gemini-2.5-flash-native-audio-preview-12-2025` to `gemini-3.8-live` on its next call.** Voices
+are unchanged, so no stored `voice` breaks. Pin the old id explicitly if you need the previous
+behaviour.
+
+`gemini-3.1-flash-live-preview` stays available and is no longer warned about: its mid-session
+limitation (no farewell, no silence re-prompt) was a plugin bug that `livekit-plugins-google`
+1.8.2 fixes. Deployments still running an older worker see the old symptom — see
+[Troubleshooting](reference/troubleshooting.md#gemini-live-mid-session-updates).
+
+### Breaking: `gemini-live-2.5-flash-native-audio` is now rejected
+
+That id runs on Vertex AI only. This platform authenticates with `GOOGLE_API_KEY`, so the
+plugin raised while building the model and the job died *after* the call connected — a
+connected call with no agent behind it. It is now a `422` at create and update.
+
+**If a stored assistant holds it**, the next update of that assistant fails validation. Run
+`uv run python scripts/audit_assistant_models.py` to list them, `--apply` to clear the field so
+they fall back to the default.
+
+### Breaking: the Deepgram STT allowlist is the priced set
+
+Deepgram no longer publishes a price for the `nova-2`, `enhanced`, `base` and hosted-`whisper`
+tiers. This platform prices every call it accepts — an accepted model with no rate bills as
+zero, which reads like a free call rather than an unpriced one — so those ids are now a `422`.
+
+Accepted: `nova-3`, `nova-3-general`, `nova-3-multilingual`, `flux-general-en`,
+`flux-general-multi`.
+
+**If a stored assistant holds a retired tier**, the same audit script finds it:
+`uv run python scripts/audit_assistant_models.py` now sweeps `assistant_stt_config.model` as
+well, and `--apply` clears it so the assistant falls back to `nova-3`.
+
+### Every provider now has a rate
+
+Calls used to come back `pricing_complete: false` whenever they touched a provider the rate
+table did not carry. Added: Gemini Live (all four accepted models), Cartesia TTS and STT,
+Mistral TTS. Two carry a caveat, stated in `src/core/pricing/rates.py` beside the numbers:
+
+- **Cartesia is derived**, not quoted — it publishes plan tiers rather than a per-unit price,
+  so the rate comes from the $49 Startup tier. Replace it with your contract rate if you have
+  one.
+- **Deepgram is priced at its regular rate**, not the lower promotional rate its page currently
+  shows, so the estimate survives the promotion ending.
+
+Gemini Live prices are listed per model in
+[Models & Providers](reference/models.md#gemini-live-pricing).
+
+---
+
 ## 1.4.0
 
 Meeting-call documentation release, plus one behaviour change to how a failed meeting setup is

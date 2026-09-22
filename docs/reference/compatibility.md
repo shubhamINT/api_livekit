@@ -27,7 +27,7 @@ then fix whichever doc is wrong.
 | Provider | `pipeline` | `realtime` | `cascade` |
 |---|---|---|---|
 | `openai` | :white_check_mark: `gpt-realtime-1.5` in text-only modality, external TTS speaks | :white_check_mark: `gpt-realtime-1.5` speaks its own audio | :white_check_mark: `openai.responses.LLM` (a plain chat model) |
-| `gemini` | :no_entry: rejected | :white_check_mark: `gemini-2.5-flash-native-audio-preview-12-2025` (default), handles STT+LLM+TTS | :no_entry: rejected |
+| `gemini` | :no_entry: rejected | :white_check_mark: `gemini-3.8-live` (default), handles STT+LLM+TTS | :no_entry: rejected |
 | omitted | :white_check_mark: defaults to `openai` | :white_check_mark: defaults to `gemini` | :white_check_mark: defaults to `openai` |
 
 !!! warning "Gemini is realtime-only"
@@ -36,9 +36,7 @@ then fix whichever doc is wrong.
     model must run in a **text-only response modality** so an external TTS can speak the result.
     Google's Live API only supports that on **non-native-audio** models
     ([googleapis/python-genai#1780](https://github.com/googleapis/python-genai/issues/1780)), and the
-    Live models this platform targets are native-audio. The 3.1 Live line additionally ignores
-    `generate_reply()`, `update_instructions()` and `update_chat_ctx()`, which the greeting and
-    agent-handoff paths depend on.
+    Live models this platform targets are native-audio.
 
     **Use Gemini with `assistant_mode: "realtime"`**, where it is fully supported, or use
     `provider: "openai"` in pipeline mode.
@@ -52,7 +50,7 @@ talks to a different API.
 |---|---|---|
 | `pipeline` | `REALTIME_MODELS` — `gpt-realtime`, `gpt-realtime-1.5`, `gpt-realtime-2`, `gpt-realtime-2025-08-28`, `gpt-realtime-mini` | `422`. A chat model such as `gpt-4.1` belongs to cascade mode. |
 | `realtime` + `openai` | same `REALTIME_MODELS` list | `422` |
-| `realtime` + `gemini` | `GEMINI_LIVE_MODELS` — `gemini-2.5-flash-native-audio-preview-12-2025` (default), `gemini-live-2.5-flash-native-audio`, `gemini-3.1-flash-live-preview` | `422` |
+| `realtime` + `gemini` | `gemini-3.8-live` (default), `gemini-3.8-live-extended-thinking`, `gemini-3.1-flash-live-preview`, `gemini-2.5-flash-native-audio-preview-12-2025`. `gemini-live-2.5-flash-native-audio` is Vertex-only and also a `422` | `422` |
 | `cascade` | `OPENAI_CASCADE_MODELS` — the chat and reasoning models listed in [Models & Providers](models.md#cascade-llm-cascade-mode-only) | `422` |
 
 Gemini Live model IDs **are** validated, against the installed plugin's own list. The Live API

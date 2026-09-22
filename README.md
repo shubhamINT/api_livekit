@@ -469,7 +469,7 @@ Two axes: **mode** (`assistant_mode`) = how many models are in the loop, **provi
 - `realtime` mode — LLM speaks its own audio, no external TTS:
   - Requires `assistant_llm_config`
   - `assistant_llm_config.provider` defaults to `gemini`; set `openai` for OpenAI realtime audio
-  - `voice`/`model`/`api_key` override defaults (Gemini `Puck`/`gemini-2.5-flash-native-audio-preview-12-2025`, OpenAI `marin`/`gpt-realtime-1.5`); both `model` and `voice` are validated per vendor
+  - `voice`/`model`/`api_key` override defaults (Gemini `Puck`/`gemini-3.8-live`, OpenAI `marin`/`gpt-realtime-1.5`); both `model` and `voice` are validated per vendor
   - Ignores `assistant_tts_model` and `assistant_tts_config` at runtime
   - When `assistant_interaction_config.speaks_first=true`, the assistant also sends the configured start instruction as the first response through the realtime conversation path
 - `cascade` mode — a true three-stage STT → LLM → TTS pipeline (`docs/architecture/cascade-pipeline.md`):

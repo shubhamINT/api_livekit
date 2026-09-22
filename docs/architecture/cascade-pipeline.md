@@ -111,8 +111,8 @@ elevenlabs — in `pipeline` mode runs no tap; the conversation LLM self-transcr
 provider is ignored and a warning is logged. `openai` collapses to the same self-transcription
 without a warning, because there is nothing to lose: same vendor, same model.)
 
-**Pitfalls & what not to combine.** Deepgram's `keyterm` is ignored on `nova-2` and
-`enable_diarization` is nova-only; `flux-general-en` is English-only. Setting an ElevenLabs
+**Pitfalls & what not to combine.** Deepgram's `enable_diarization` is nova-only and
+`flux-general-en` is English-only. Setting an ElevenLabs
 `language_code` disables auto-detect. And the omission defaults differ: omitted `language` on
 Deepgram falls back to `en` (not `multi`), whereas omitted `language_code` on ElevenLabs can
 auto-detect. Full list: [STT pitfalls & what not to combine](../reference/models.md#stt-pitfalls-what-not-to-combine).
@@ -153,10 +153,10 @@ that default flipped from `ink-whisper` to the English-only `ink-2` in `livekit-
 
 | Config key | Default | Values |
 |---|---|---|
-| `model` | `nova-3` | `nova-3` (multilingual, 45 languages), `nova-2`, `flux-general-en` (English), `flux-general-multi` — swapping changes the transcription family; omitted keeps the default |
+| `model` | `nova-3` | `nova-3` (multilingual, 45 languages), `nova-3-general`, `nova-3-multilingual`, `flux-general-en` (English), `flux-general-multi` — swapping changes the transcription family; omitted keeps the default |
 | `language` | `multi` on `nova-3` / `flux-general-multi`, else `en-US` | a fixed BCP-47 code (`en-US`, `hi-IN`), or `multi` to **auto-detect** per segment. A 3-letter code such as `hin` belongs to ElevenLabs and is rejected here. On the flux models this becomes `language_hint`, which only `flux-general-multi` reads |
 | `enable_diarization` | `false` | `bool` — label each utterance with its speaker (nova models) — `true` turns it on; **omitted stays `false`, never force-enabled** |
-| `keyterm` | not sent | string or list of terms to bias recognition toward (`nova-3`/`flux` only) — set to bias; **omitted — the key is not sent, no biasing** |
+| `keyterm` | not sent | string or list of terms to bias recognition toward — set to bias; **omitted — the key is not sent, no biasing** |
 | `api_key` | system `DEEPGRAM_API_KEY` | per-assistant override — wins over the env key |
 
 `model="nova-3"` with `language="multi"` covers 45 languages and auto-detects, so it is the
