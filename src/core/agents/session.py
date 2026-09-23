@@ -616,6 +616,15 @@ async def entrypoint(ctx: JobContext):
         # await livekit_services.mute_room_audio_inputs(ctx.room.name)
         if delay > 0:
             await asyncio.sleep(delay)  # Let TTS audio finish streaming to egress
+        # A hangup mid-reply: the SDK emits the assistant item only on playout end or
+        # interrupt, and a long reply outlives the grace below, so it landed after
+        # _transcripts_closed and was dropped. Interrupting emits it now, with the text
+        # actually played (TTS-aligned). force=True: farewells disallow interruptions.
+        if not is_text_only:
+            try:
+                await asyncio.wait_for(session.interrupt(force=True), timeout=2.0)
+            except (RuntimeError, TimeoutError) as e:
+                logger.warning(f"Could not interrupt final agent speech: {e}")
         # The caller's last utterance comes back *after* their audio has stopped, on both STT
         # paths: Sarvam needs a network round-trip, and the realtime model has to transcribe
         # the audio it is still holding. Ask each to finalize, then hold the transcript path
