@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hybrid XML + Markdown built-in prompts</title>
+<style>
+:root{--bg:#fff;--fg:#1c1c1e;--mut:#5b5b62;--line:#d8d8de;--ok:#1a7f37;--box:#f4f5f8}
+@media (prefers-color-scheme:dark){:root{--bg:#16171a;--fg:#e8e8ea;--mut:#a0a0a8;--line:#34353b;--ok:#4cc16b;--box:#202126}}
+body{background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,sans-serif;max-width:60rem;margin:0 auto;padding:1.5rem 16px}
+h1{font-size:1.6rem}h2{margin-top:2rem;font-size:1.2rem;border-bottom:1px solid var(--line);padding-bottom:.3rem}
+table{border-collapse:collapse;width:100%;font-size:.9rem}th,td{border:1px solid var(--line);padding:.35rem .5rem;text-align:left;vertical-align:top}
+code,pre{font:.85rem ui-monospace,monospace;background:var(--box)}pre{padding:.7rem;overflow-x:auto;border-radius:6px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:700px){.cols{grid-template-columns:1fr}}
+.met{color:var(--ok);font-weight:600}.mut{color:var(--mut)}
+</style></head><body>
+<h1>Hybrid XML + Markdown built-in prompts</h1>
+<p class="mut">Task <code>2026-10-22-feature-hybrid-prompt-format</code> · spec 001 · verdict <strong>Converged</strong> · nothing committed</p>
+
+<h2>Outcome</h2>
+<p>All 8 prompts the worker writes itself are now built in <code>src/core/agents/prompts.py</code> as top-level snake_case XML tags with Markdown inside. Every original rule is kept word for word. The operator's stored assistant prompt is wrapped unchanged in <code>&lt;assistant_prompt&gt;</code>. 698 tests pass; <code>src/api/</code> and <code>src/core/db/</code> are untouched.</p>
+
+<h2>Current → Target</h2>
+<div class="cols">
+<div><strong>Current</strong><pre>stored prompt
+  + "\n\n---\nENDING THE CALL: ..."   (session.py glued it on)
+  + "\n\n---\nSPEECH OUTPUT RULES ..." (DynamicAssistant glued it on)
+= one string
+
+backchannel / farewell / greeting /
+silence / end_call reply:
+  inline strings at 8 sites</pre></div>
+<div><strong>Target</strong><pre>compose_instructions(stored, ending_the_call)
+  &lt;assistant_prompt&gt; stored, verbatim &lt;/...&gt;
+  &lt;ending_the_call&gt; ... &lt;/...&gt;
+DynamicAssistant appends
+  &lt;speech_output_rules&gt; ... &lt;/...&gt;
+
+all 8 prompts: prompts.py builders</pre></div>
+</div>
+
+<h2>Acceptance criteria</h2>
+<table><tr><th>AC</th><th>Evidence</th><th>Status</th></tr>
+<tr><td>AC-1</td><td><code>assert_hybrid</code> on every built prompt (tests/test_builtin_prompts.py)</td><td class="met">met</td></tr>
+<tr><td>AC-2</td><td>golden originals: every rule line present, bullet counts equal</td><td class="met">met</td></tr>
+<tr><td>AC-3</td><td>compose order + <code>DynamicAssistantInstructionsTests</code></td><td class="met">met</td></tr>
+<tr><td>AC-4</td><td>empty / <code>None</code> prompt: no empty tag, speech rules still present</td><td class="met">met</td></tr>
+<tr><td>AC-5</td><td><code>&lt;avoid&gt;</code> only when the list is non-empty</td><td class="met">met</td></tr>
+<tr><td>AC-6</td><td>farewell keeps "say this exactly and nothing else" and the sentence</td><td class="met">met</td></tr>
+<tr><td>AC-7</td><td>stored start instruction verbatim; default wrapped</td><td class="met">met</td></tr>
+<tr><td>AC-8</td><td>full suite green; no diff under <code>src/api</code>, <code>src/core/db</code></td><td class="met">met</td></tr>
+<tr><td>AC-9</td><td>speech rules and backchannel prompt ≤ 1.25 × original characters</td><td class="met">met</td></tr>
+<tr><td>AC-10</td><td>values with <code>&lt; &gt; &amp;</code> inserted unescaped</td><td class="met">met</td></tr>
+<tr><td>AC-11</td><td>trigger-phrase hint only when set; goodbye exact</td><td class="met">met</td></tr></table>
+
+<h2>Decisions that differ from the first plan</h2>
+<ul>
+<li>Spec amended while planning: three more prompts found (end-call directive, end-call reply, backchannel user message); AC-9 measures characters because no tokenizer is installed.</li>
+<li>The greeting is wrapped where it goes to the model; <code>DynamicAssistant.start_instruction</code> stays plain because the silence watchdog records it.</li>
+<li>After the simplicity review: instructions are composed once in <code>session.py</code>; <code>DynamicAssistant</code> only appends the speech rules.</li>
+</ul>
+
+<h2>Before release</h2>
+<ul>
+<li>Place one test call per mode (pipeline, realtime, cascade, duplex). Unit tests cannot judge whether the model still follows the rules.</li>
+<li>Listen to a Gemini greeting: the text turn now carries <code>&lt;instruction&gt;</code> tags, and a model could read them aloud.</li>
+<li>The filler user message says <code>&lt;conversation&gt;</code> where it said "Recent conversation:".</li>
+<li>Rollback: revert the commit and redeploy the agent image. No data or API change.</li>
+</ul>
+
+<h2>Not fixed here</h2>
+<p>The backchannel OpenAI client in <code>voice_features.py</code> has no explicit timeout. The livekit <code>assert dropped</code> trace at the end of the test run also appears on the unmodified tree.</p>
+</body></html>

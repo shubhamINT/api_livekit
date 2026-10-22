@@ -9,6 +9,11 @@ from livekit.agents import AgentSession
 from openai import AsyncOpenAI
 
 from src.core.agents.audio_denoise import SpeechGate
+from src.core.agents.prompts import (
+    backchannel_system,
+    backchannel_user,
+    silence_reprompt,
+)
 from src.core.config import settings
 
 REPROMPT_INTERVAL_SEC: Final[float] = 10.0
@@ -29,16 +34,10 @@ async def generate_filler(context: list[dict[str, str]], api_key: str | None = N
         _client = AsyncOpenAI(api_key=resolved_key)
 
     avoid = list(_recent_fillers)
-    avoid_clause = f"Do not use any of these phrases: {avoid}. " if avoid else ""
-
-    if context:
-        context_lines = "\n".join(
-            f"{index + 1}. [{turn['role'].capitalize()}]: {turn['text']}"
-            for index, turn in enumerate(context[-4:])
-        )
-        context_block = f"Recent conversation:\n{context_lines}\n\n"
-    else:
-        context_block = ""
+    context_lines = "\n".join(
+        f"{index + 1}. [{turn['role'].capitalize()}]: {turn['text']}"
+        for index, turn in enumerate(context[-4:])
+    )
 
     try:
         response = await _client.chat.completions.create(
@@ -46,32 +45,11 @@ async def generate_filler(context: list[dict[str, str]], api_key: str | None = N
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "You are a human listener on a live voice call. The user is mid-sentence RIGHT NOW — "
-                        "they haven't finished speaking.\n\n"
-                        "Your ONLY job: produce a single backchannel filler (1–3 words) that a human would "
-                        "murmur WHILE the other person is still talking — not after.\n\n"
-                        "CRITICAL RULES:\n"
-                        "- The filler must feel natural MID-SENTENCE, not as a response to a complete thought.\n"
-                        "- Prefer ultra-short: 'Mm.', 'Yeah.', 'Mm-hmm.', 'Right.', 'Uh-huh.' for neutral flow.\n"
-                        "- Tone-match only if the emotional signal is very strong:\n"
-                        "    sad/heavy → 'Mm.', 'Yeah...', 'I see.'\n"
-                        "    excited/surprising → 'Oh!', 'Wow.', 'Really?'\n"
-                        "    thoughtful/explaining → 'Right.', 'Um-hmm.', 'Yeah.'\n"
-                        "- NEVER complete their thought, answer, advise, or ask anything.\n"
-                        "- NEVER use more than 3 words.\n"
-                        "- No quotes. Natural punctuation only.\n"
-                        "- Default to the shortest possible filler. When in doubt: 'Um-hmm.' or 'Yeah.'\n"
-                        f"{avoid_clause}"
-                    ),
+                    "content": backchannel_system(avoid),
                 },
                 {
                     "role": "user",
-                    "content": (
-                        f"{context_block}"
-                        "The user is still speaking mid-sentence. "
-                        "Output only the filler word or phrase a human listener would murmur right now."
-                    ),
+                    "content": backchannel_user(context_lines),
                 },
             ],
             max_tokens=10,
@@ -186,7 +164,7 @@ class SilenceWatchdogController:
                 try:
                     if self._use_llm_for_speech:
                         await self._session.generate_reply(
-                            instructions="The user has been silent. Briefly ask if they are still there.",
+                            instructions=silence_reprompt(),
                         )
                     else:
                         await self._session.say(

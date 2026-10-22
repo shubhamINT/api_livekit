@@ -289,3 +289,14 @@ Public field list: [Usage accounting](../../docs/reference/usage-accounting.md).
 | TTS | `src/core/agents/tts/factory.py` | `create_tts`, `_resolve_api_key`, `maintain_sarvam_connection` |
 | Session construction, turn detection | `src/core/agents/session.py` | `entrypoint` |
 | Usage folding | `src/core/agents/usage.py` | `summarize_usage`, `normalize_provider` |
+| Built-in prompts | `src/core/agents/prompts.py` | `compose_instructions`, `speech_output_rules`, `ending_the_call`, `backchannel_system` |
+
+## Built-in prompts
+
+Every prompt the worker writes itself lives in `src/core/agents/prompts.py` as top-level snake_case XML tags with Markdown inside: the tag names the section, the Markdown carries the rules. Nothing sits outside a tag, and there are no Markdown headings, because the tag already is the heading. A new built-in prompt follows the same shape and gets a test in `tests/test_builtin_prompts.py`.
+
+The agent's instructions are assembled in a fixed order by `compose_instructions`: the operator's stored prompt in `<assistant_prompt>` (left out when empty), then `<ending_the_call>` when the end-call tool is on, then `<speech_output_rules>`. `session.py` composes the first two once and hands the result to both `DynamicAssistant` (which appends `<speech_output_rules>`) and the Gemini realtime model; it no longer appends the end-call section to `assistant.assistant_prompt`, so the stored text stays exactly as the operator wrote it.
+
+Values the operator writes (the stored prompt, a start instruction) and values inserted at run time (the avoid list, the goodbye message) go in raw and are not escaped. The operator already controls the whole prompt, and escaping would change what the model reads. The silence re-prompt sentence and the farewell sentence are spoken to the caller, not prompts, and are not wrapped.
+
+The greeting instruction is wrapped at the point it goes to the model (`greeting_instruction`). `DynamicAssistant.start_instruction` stays the plain text, because the silence watchdog records it as the assistant's last message.

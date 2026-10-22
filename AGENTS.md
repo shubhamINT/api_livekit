@@ -166,6 +166,7 @@ REST routes require `Authorization: Bearer <api_key>` (keys are `lvk_`-prefixed,
 | Worker launch + `WorkerOptions` | `agent_run.py` |
 | Agent session entrypoint | `src/core/agents/session.py` |
 | Agent class (DynamicAssistant) | `src/core/agents/dynamic_assistant.py` |
+| Built-in prompts (XML tags + Markdown inside) | `src/core/agents/prompts.py` |
 | Session lifecycle (gate, recording) | `src/core/agents/session_lifecycle.py` |
 | Voice features (silence watchdog, filler, hold) | `src/core/agents/voice_features.py` |
 | TTS factory (cartesia/sarvam/elevenlabs/mistral) | `src/core/agents/tts/factory.py` |

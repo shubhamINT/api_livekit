@@ -38,6 +38,14 @@ from src.core.agents.inbound_context import (
 )
 from src.core.agents.llm import DEFAULT_MODEL as DEFAULT_CASCADE_LLM_MODEL
 from src.core.agents.llm import create_gpt_live, create_llm
+from src.core.agents.prompts import (
+    DEFAULT_GREETING,
+    compose_instructions,
+    end_call_reply,
+    ending_the_call,
+    farewell_instruction,
+    greeting_instruction,
+)
 from src.core.agents.session_lifecycle import (
     CallReadinessGate,
     RecordingManager,
@@ -764,6 +772,7 @@ async def entrypoint(ctx: JobContext):
         return True
 
     # Custom end_call tool — LLM speaks goodbye first, tool waits for playout before stopping recording
+    end_call_sections: tuple[str, ...] = ()
     if getattr(assistant, "assistant_end_call_enabled", False):
         trigger_phrase = (getattr(assistant, "assistant_end_call_trigger_phrase", None) or "").strip()
         agent_message = (getattr(assistant, "assistant_end_call_agent_message", None) or "Thank you, goodbye!").strip()
@@ -818,29 +827,21 @@ async def entrypoint(ctx: JobContext):
             _ctx.speech_handle.add_done_callback(
                 lambda _: asyncio.create_task(_end_after_goodbye())
             )
-            return f"Say this to the user: '{agent_message}'"
+            return end_call_reply(agent_message)
 
         tools.append(end_call)
         logger.info(f"Custom end_call tool enabled for assistant {assistant.assistant_id}")
 
         # System-prompt directive is the strong trigger signal (tool description alone is weak).
         # Intent-based + multilingual so the model fires on approximate/other-language speech.
-        _phrase_hint = f' For example, when the user says something like "{trigger_phrase}".' if trigger_phrase else ""
-        assistant.assistant_prompt = (assistant.assistant_prompt or "") + (
-            "\n\n---\nENDING THE CALL:\n"
-            "You have an `end_call` tool. Call it the moment the user shows they want to "
-            "end, finish, or hang up the call — in ANY language or wording, even if their "
-            "words are partial, misspelled, mispronounced, or only roughly match."
-            f"{_phrase_hint} "
-            "Do not wait for an exact phrase and do not ask for confirmation. "
-            "After calling it, speak the goodbye it gives you, then stop.\n---"
-        )
+        end_call_sections = (ending_the_call(trigger_phrase),)
 
     # --- Build Agent & LLM ---
+    instructions = compose_instructions(assistant.assistant_prompt, *end_call_sections)
     agent_instance = DynamicAssistant(
         room=ctx.room,
-        instructions=assistant.assistant_prompt,
-        start_instruction=assistant.assistant_start_instruction or "Greet the user Professionally",
+        instructions=instructions,
+        start_instruction=assistant.assistant_start_instruction or DEFAULT_GREETING,
         tools=tools,
         stt_usage=_cascade_stt_usage,
     )
@@ -946,7 +947,7 @@ async def entrypoint(ctx: JobContext):
                 model=llm_config.get("model") or DEFAULT_GEMINI_LIVE_MODEL,
                 voice=llm_config.get("voice") or DEFAULT_GEMINI_VOICE,
                 modalities=["AUDIO"],
-                instructions=assistant.assistant_prompt,
+                instructions=instructions,
                 api_key=llm_config.get("api_key") or settings.GOOGLE_API_KEY,
                 **gemini_knobs,
             )
@@ -1615,7 +1616,7 @@ async def entrypoint(ctx: JobContext):
             try:
                 farewell = "I'm sorry, our call has reached its time limit. Thank you for calling. Goodbye!"
                 await session.generate_reply(
-                    instructions=f"Say this exactly and nothing else: '{farewell}'",
+                    instructions=farewell_instruction(farewell),
                     allow_interruptions=False,
                 )
             except Exception as e:
@@ -1772,7 +1773,7 @@ async def entrypoint(ctx: JobContext):
                                 if not allow_int:
                                     agent_instance._allow_interruptions = False
                                 handle = session.generate_reply(
-                                    instructions=start_instruction, allow_interruptions=allow_int
+                                    instructions=greeting_instruction(start_instruction), allow_interruptions=allow_int
                                 )
                                 await handle
                             finally:
@@ -1790,14 +1791,14 @@ async def entrypoint(ctx: JobContext):
 
                                 rt_session = agent_instance.realtime_llm_session
                                 rt_session._send_client_event(
-                                    genai_types.LiveClientRealtimeInput(text=start_instruction)
+                                    genai_types.LiveClientRealtimeInput(text=greeting_instruction(start_instruction))
                                 )
                             else:
                                 # OpenAI realtime (audio out): standard greeting via generate_reply.
                                 if not allow_int:
                                     agent_instance._allow_interruptions = False
                                 try:
-                                    await session.generate_reply(instructions=start_instruction, allow_interruptions=allow_int)
+                                    await session.generate_reply(instructions=greeting_instruction(start_instruction), allow_interruptions=allow_int)
                                 finally:
                                     agent_instance._allow_interruptions = NOT_GIVEN
                         else:
@@ -1810,7 +1811,7 @@ async def entrypoint(ctx: JobContext):
                             try:
                                 if not allow_int:
                                     agent_instance._allow_interruptions = False
-                                await session.generate_reply(instructions=start_instruction, allow_interruptions=allow_int)
+                                await session.generate_reply(instructions=greeting_instruction(start_instruction), allow_interruptions=allow_int)
                             finally:
                                 agent_instance._allow_interruptions = NOT_GIVEN
 
