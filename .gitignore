@@ -19,3 +19,8 @@ call-end-reports
 # Generated documentation
 *site/
 *sripts/
+
+# core-be:start
+# Managed by the core-backend skill pack (Register the pack). Edit the pack, not this block.
+agent-tracking/board/
+# core-be:end

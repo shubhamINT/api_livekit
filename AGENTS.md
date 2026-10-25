@@ -43,7 +43,7 @@ directory below, so a task's plan, research and report find each other by name.
 | Path | Holds |
 |---|---|
 | `agent-tracking/INDEX.md` | One row per task with its status and report link — start here |
-| `agent-tracking/plans/<slug>/` | `scope.md` (the request, verbatim), `plan.md`, `progress.md`; older tasks keep the plan and its progress log together in `plan.md` |
+| `agent-tracking/plans/<slug>/` | `scope.md` (the request, verbatim), `tasks.md` (the approved checklist), `progress.md`; older tasks keep the plan and its progress log together in `plan.md` |
 | `agent-tracking/research/<slug>.md` | Research write-ups and findings, including their unverified claims |
 | `agent-tracking/reports/<slug>.html` | The finished report for the task |
 | `agent-tracking/demo-code/` | Spikes and prototypes that are not wired into the app |
@@ -117,11 +117,13 @@ uvx ruff check .
 uvx ruff format .
 
 # Build docs
-mkdocs build --strict
+uv run mkdocs build --strict
 
 # Serve docs locally
-mkdocs serve
+uv run mkdocs serve
 ```
+
+Tests use stdlib `unittest`, not pytest; this overrides the pack's language baseline below.
 
 ## Architecture
 
@@ -249,8 +251,8 @@ WebSocket the runtime uses, a rejection is `status_code=-1` with no parameter na
 ### Deployment modes
 
 Controlled by `./deploy.sh <mode>` and Docker profiles:
-- `control` — API + SIP dispatcher (`Dockerfile.control`, `docker/requirements-control.txt`)
-- `agent` — LiveKit worker only (`Dockerfile.agent`, `docker/requirements-agent.txt`)
+- `control` — API + SIP dispatcher (`docker/Dockerfile.control`, `docker/requirements-control.txt`)
+- `agent` — LiveKit worker only (`docker/Dockerfile.agent`, `docker/requirements-agent.txt`)
 - `full` — all services on one host (`Dockerfile`)
 
 In multi-host production: set `ENABLE_SIP_LISTENER=false` and `ENABLE_DISPATCHER=false` on the API container; run the dedicated `sip_dispatcher` container instead.
@@ -397,7 +399,7 @@ Always-on behaviour:
    refactoring). Record it. Do not silently fix anything outside the agreed
    scope; offer a follow-up task. Report security holes immediately.
 4. **Structure first.** Before placing or moving code, read the
-   `## Project structure` section at the end of this file. If it is empty, run
+   the Project structure section at the end of this file. If it is empty, run
    `core-be-structure-service`: detect the current structure, confirm it with the user,
    and record it there.
 5. **Help the user understand.** Explain decisions and findings so a developer
@@ -413,7 +415,12 @@ Always-on behaviour:
 | Task type | Examples | Skills |
 |-----------|----------|--------|
 | **Trivial** | answer a question, fix a typo, rename one variable, explain code | Just do it (always-on rules still apply, radar included). No tracking. |
-| **Feature** | "add an endpoint", "support X", "integrate Y" | `core-be-workflow` → `core-be-build-feature` |
+| **Feature** | "add an endpoint", "support X", "integrate Y" | `core-be-workflow` → [`core-be-constitution` once] → `core-be-specify` → `core-be-clarify` → `core-be-plan` → `core-be-tasks` → `core-be-analyze` → approval → `core-be-implement` → `core-be-converge` |
+| **Change** | "limit it to 10k rows", "change how X works", "drop support for Y" | `core-be-workflow` → `core-be-change` (edit the spec first) → `core-be-clarify` → `core-be-plan` (delta) → `core-be-tasks` → `core-be-analyze` → approval → `core-be-implement` → `core-be-converge` |
+| **Assess** | "should we build X", "is this worth it", a vague idea | `core-be-workflow` → `core-be-assess` → `go` / `needs-clarification` / `kill` |
+| **Explain** | "how does X work", "walk me through this flow", "I am new to this code" | `core-be-workflow` → `core-be-explain` |
+| **Init** | "set up this repo", "onboard this project", "start a new project", messy `AGENTS.md` / `CLAUDE.md` | `core-be-workflow` → `core-be-init` → first feature through `core-be-specify` |
+| **Constitution** | "set up SDD", "project principles" | `core-be-workflow` → `core-be-constitution` |
 | **Refactor** | "clean this up", "this code is a mess", "restructure", "reduce duplication" | `core-be-workflow` → `core-be-refactor-code` |
 | **Code audit** | "review this code", "check for bad code", "find bugs", "review what the AI wrote" | `core-be-workflow` → `core-be-audit-code` |
 | **Security audit** | "security audit", "find vulnerabilities", "is this safe", "OWASP check" | `core-be-workflow` → `core-be-audit-security` |
@@ -425,6 +432,32 @@ Always-on behaviour:
 Unsure whether a task is trivial? Treat it as non-trivial. A change that touches
 more than one file, any trust boundary (auth, input parsing, external calls,
 secrets), or any public interface is never trivial.
+
+### Specs (spec-driven development)
+
+`feature` and `change` tasks are spec-driven. Files, all committed with the code:
+
+- `specs/constitution.md` — project principles, each with a yes/no gate question
+  (`core-be-constitution`).
+- `specs/<NNN-topic>/spec.md` — what and why, numbered acceptance criteria
+  (`core-be-specify`, edited first by `core-be-change`).
+- `specs/<NNN-topic>/plan.md` — the durable design (`core-be-plan`).
+
+Order: spec, then plan, then tasks, then analysis, then user approval, then
+code, then converge. Edit the spec first, never the code first. Done means
+`core-be-converge` returned `Converged`. Refactors, audits, security reviews,
+debugging, and test work change no behaviour and need no spec.
+
+### Guard
+
+An edit guard (a command hook that Claude Code, Codex, Cursor, Copilot, Gemini CLI, and
+Windsurf can run: `core-be-workflow/scripts/sdd-hook.sh`) and a validator
+(`core-be-workflow/scripts/sdd-check.sh`) back these rules. A source edit needs an approved
+task row in `agent-tracking/INDEX.md`; a `feature` or `change` task also needs its
+spec first. You may not stop mid-implementation before `Verdict: Converged` is in
+`progress.md`. When the guard says no, do what its message says. Never edit the
+hook, its config, or the scripts, and never set `SDD_GUARD`. CI runs
+`sdd-check.sh ci` on the committed files, so a skipped step fails the build.
 
 ## 3. The non-trivial workflow (mandatory)
 
@@ -440,7 +473,7 @@ Follow the `core-be-workflow` skill. In short:
    Reports are visual: a Current → Target diagram for every change
    (`core-be-workflow/references/VISUAL-REPORT.md`). Audit and security reports load no
    external scripts.
-3. **Research**, then **plan**: write `plan.md`, show it, and wait for explicit
+3. **Research**, then **plan**: write `tasks.md`, show it, and wait for explicit
    approval.
 4. **Execute the approved plan only.** Log each step in `progress.md`. New scope
    found mid-task: stop, record it, ask.
@@ -455,7 +488,9 @@ Every code change ships in small reversible steps with a concrete rollback
 **Use subagents where they add independence or parallelism**
 (`core-be-workflow/references/SUBAGENTS.md`): read-only `investigator`s for
 audit fan-out and debugging hypotheses, a `test-writer` that writes tests from
-the contract, and a fresh-context `reviewer` before every report. Brief a
+the contract, and a fresh-context `reviewer` before every report (a separate
+pass when the host has no subagents; a self-pass is enough for a diff under
+about 50 lines). Brief a
 general-purpose subagent with the role text from `SUBAGENTS.md`. Verify what
 they return.
 
@@ -518,6 +553,18 @@ indexed (enforced by tool / rule / override) in
 |-------|------|----------|
 | `core-be-coding-standards` | always on | Writing, changing, or judging any code |
 | `core-be-workflow` | always on | Any non-trivial task: record, scope, plan, approve, report |
+| `core-be-constitution` | task | Creating or amending `specs/constitution.md` |
+| `core-be-assess` | task | Deciding go / needs-clarification / kill for an idea before any spec |
+| `core-be-explain` | task | Explaining how existing code works: read-only trace, HTML page |
+| `core-be-init` | task | Setting up or repairing a repo for the pack; fixing `AGENTS.md` and `CLAUDE.md`; the project brief |
+| `core-be-specify` | task | Writing the spec for a new feature |
+| `core-be-change` | task | Changing an existing feature: spec first |
+| `core-be-clarify` | task | Resolving open questions in a spec |
+| `core-be-plan` | task | Writing the durable design plan for a spec |
+| `core-be-tasks` | task | Turning spec and plan into the test-first checklist |
+| `core-be-analyze` | task | Read-only consistency check before approval |
+| `core-be-implement` | task | Building from the approved checklist |
+| `core-be-converge` | task | Checking code against the spec; verdict `Converged` |
 | `core-be-build-feature` | task | Building new behaviour |
 | `core-be-refactor-code` | task | Changing structure without changing behaviour; architecture review |
 | `core-be-audit-code` | task | Finding bugs, bad code, weak tests, AI-generated-code failures |
