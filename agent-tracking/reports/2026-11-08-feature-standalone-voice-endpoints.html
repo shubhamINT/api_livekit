@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Standalone Voice Endpoints (STT, TTS, LLM)</title>
+<style>
+:root{--bg:#fff;--fg:#1c1c1e;--mut:#5b5b62;--line:#d8d8de;--ok:#1a7f37;--box:#f4f5f8}
+@media (prefers-color-scheme:dark){:root{--bg:#16171a;--fg:#e8e8ea;--mut:#a0a0a8;--line:#34353b;--ok:#4cc16b;--box:#202126}}
+body{background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,sans-serif;max-width:60rem;margin:0 auto;padding:1.5rem 16px}
+h1{font-size:1.6rem}h2{margin-top:2rem;font-size:1.2rem;border-bottom:1px solid var(--line);padding-bottom:.3rem}
+table{border-collapse:collapse;width:100%;font-size:.9rem}th,td{border:1px solid var(--line);padding:.35rem .5rem;text-align:left;vertical-align:top}
+code,pre{font:.85rem ui-monospace,monospace;background:var(--box)}pre{padding:.7rem;overflow-x:auto;border-radius:6px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:700px){.cols{grid-template-columns:1fr}}
+.met{color:var(--ok);font-weight:600}.mut{color:var(--mut)}
+</style></head><body>
+<h1>Standalone Voice Endpoints (STT, TTS, LLM)</h1>
+<p class="mut">Task <code>2026-11-08-feature-standalone-voice-endpoints</code> · spec 002 · verdict <strong>Converged</strong> · nothing committed</p>
+
+<h2>Outcome</h2>
+<p>Standalone modular REST endpoints have been implemented under FastAPI for Speech-to-Text (<code>POST /stt/transcribe</code>), Text-to-Speech (<code>POST /tts/synthesize</code>), and Chat Completions (<code>POST /llm/chat</code>). They support direct parameters as well as assistant configuration inheritance. Direct async HTTP clients in <code>src/services/{stt,tts,llm}/</code> keep the control container completely free of <code>livekit.plugins.*</code> dependencies (Constitution Principle 8). All 715 tests pass.</p>
+
+<h2>Endpoints Implemented</h2>
+<ul>
+<li><strong><code>POST /stt/transcribe</code></strong>: Multipart audio upload (up to 25 MB) returning JSON transcription, language, and duration. Providers: Sarvam, Cartesia, Deepgram, OpenAI, ElevenLabs.</li>
+<li><strong><code>POST /tts/synthesize</code></strong>: Text input (up to 5,000 characters) returning binary audio stream (<code>audio/wav</code>, <code>audio/mpeg</code>) with optional persistence to user audio library. Providers: Cartesia, Sarvam, ElevenLabs, Mistral.</li>
+<li><strong><code>POST /llm/chat</code></strong>: Chat messages returning standard JSON or Server-Sent Events (SSE) streaming. Providers: OpenAI, Gemini.</li>
+</ul>
+
+<h2>Acceptance Criteria</h2>
+<table><tr><th>AC</th><th>Evidence</th><th>Status</th></tr>
+<tr><td>AC-1</td><td><code>TestStandaloneVoiceRoutes::test_stt_transcribe_success</code></td><td class="met">met</td></tr>
+<tr><td>AC-2</td><td><code>TestStandaloneVoiceRoutes::test_auth_rejection</code> (401 across all routes)</td><td class="met">met</td></tr>
+<tr><td>AC-3</td><td><code>TestStandaloneVoiceRoutes::test_stt_rejects_oversized_audio</code>, <code>::test_stt_rejects_empty_audio</code></td><td class="met">met</td></tr>
+<tr><td>AC-4</td><td><code>TestStandaloneVoiceRoutes::test_tts_synthesize_success</code> (binary streaming)</td><td class="met">met</td></tr>
+<tr><td>AC-5</td><td><code>TestStandaloneVoiceSchemas::test_tts_rejects_empty_text</code>, <code>::test_tts_rejects_text_over_5000_chars</code></td><td class="met">met</td></tr>
+<tr><td>AC-6</td><td><code>TestStandaloneVoiceRoutes::test_llm_chat_non_stream_success</code></td><td class="met">met</td></tr>
+<tr><td>AC-7</td><td><code>TestStandaloneVoiceRoutes::test_llm_chat_stream_success</code> (SSE [DONE])</td><td class="met">met</td></tr>
+<tr><td>AC-8</td><td><code>TestStandaloneVoiceRoutes::test_assistant_inheritance_and_override</code></td><td class="met">met</td></tr>
+<tr><td>AC-9</td><td><code>TestStandaloneVoiceRoutes::test_unowned_assistant_returns_404</code></td><td class="met">met</td></tr>
+<tr><td>AC-10</td><td><code>TestStandaloneVoiceRoutes::test_invalid_provider_returns_422</code></td><td class="met">met</td></tr>
+<tr><td>AC-11</td><td><code>TestStandaloneVoiceRoutes::test_log_standalone_usage</code> (call_service=standalone_api)</td><td class="met">met</td></tr>
+</table>
+
+<h2>Verification Summary</h2>
+<ul>
+<li><strong>Unit & Adapter Tests:</strong> <code>.venv/bin/python -m unittest tests/test_standalone_voice_endpoints.py -v</code> (26 tests, all OK).</li>
+<li><strong>Regression Suite:</strong> <code>.venv/bin/python -m unittest discover -s tests</code> (724 tests, all OK).</li>
+<li><strong>Documentation:</strong> <code>.venv/bin/mkdocs build --strict</code> (0 errors, 39 Mermaid diagrams clean).</li>
+<li><strong>SDD Check:</strong> <code>sdd-check.sh converge</code> (OK).</li>
+</ul>
+</body></html>
+

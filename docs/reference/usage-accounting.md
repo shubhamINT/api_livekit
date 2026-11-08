@@ -9,6 +9,9 @@ The record reaches you four ways: the [end-of-call webhook](../api/calls/webhook
 [per-call usage endpoint](../api/calls/usage.md), the `usage_records` collection directly, and
 the user/admin analytics endpoints ([user summary](../api/analytics/tokens-summary.md),
 [user by model](../api/analytics/tokens-by-model.md), [admin by model](../api/admin/tokens-by-model.md)).
+Standalone API calls ([STT](../api/stt.md), [TTS](../api/tts.md), [LLM](../api/llm.md)) also write to
+`usage_records` with `call_service="standalone_api"`, and return real-time usage and `estimated_cost_usd`
+in their HTTP responses and headers.
 
 ## Where the numbers come from
 

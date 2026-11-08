@@ -1,0 +1,284 @@
+<!doctype html>
+<!--
+  Agent report template. Patterns and rules: ../references/VISUAL-REPORT.md
+  Save to agent-tracking/reports/<slug>.html.
+
+  HOW TO FILL
+  - Replace every {{placeholder}} in text. Never put {{placeholders}} inside a
+    style="" attribute or a Mermaid block: write real numbers and names there.
+  - Delete blocks that do not apply to the task type, then renumber the sections.
+  - Current -> Target shows two example diagrams. Replace them with the real
+    ones; more patterns are in the guide.
+
+  SCRIPT POLICY
+  - refactor / feature / structure / test: the Mermaid import below is the only
+    external script allowed. No secrets or security findings in these reports.
+  - core-be-audit-code / core-be-audit-security: DELETE the Mermaid script block and every
+    <pre class="mermaid">. Use plain boxes and tables only; works offline.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{Report title}} — {{slug}}</title>
+<!-- Mermaid: refactor / feature / structure / test reports only. Delete for audit and security. -->
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral" });
+  // Render one by one with fixed ids: auto-generated ids can collide and put a diagram in the wrong panel.
+  for (const [i, el] of document.querySelectorAll("pre.mermaid").entries()) {
+    const { svg } = await mermaid.render(`mmd-${i}`, el.textContent);
+    el.innerHTML = svg;
+  }
+</script>
+<style>
+  :root {
+    --fg: #1f2937; --muted: #6b7280; --line: #e5e7eb; --soft: #f9fafb; --accent: #4f46e5;
+    --crit: #991b1b; --high: #dc2626; --med: #d97706; --low: #2563eb; --info: #6b7280;
+    --ok: #059669; --ok-bg: #ecfdf5; --chg-bg: #fffbeb; --bad-bg: #fef2f2;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #fff; color: var(--fg); font: 15px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1000px; margin: 0 auto; padding: 40px 16px 64px; }
+  a { color: var(--accent); }
+  h1 { font-size: 1.75rem; margin: 0 0 6px; }
+  h2 { font-size: 1.2rem; margin: 40px 0 12px; padding-bottom: 6px; border-bottom: 2px solid var(--accent); }
+  h3 { font-size: 1rem; margin: 24px 0 8px; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 16px; }
+  .meta, .legend { color: var(--muted); font-size: .88rem; margin: 2px 0; }
+  .headline { font-size: 1.05rem; margin: 14px 0 0; }
+  .legend b, .label { font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .85rem; }
+  code { background: var(--soft); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--soft); padding: 12px; border-radius: 6px; overflow-x: auto; margin: 0; }
+  .card { border: 1px solid var(--line); border-radius: 8px; padding: 16px 20px; margin: 12px 0; }
+  .two, .ct { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 720px) { .two, .ct { grid-template-columns: 1fr; } }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
+  dt { color: var(--muted); font-weight: 600; } dd { margin: 0; }
+
+  /* summary numbers */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 12px; margin: 12px 0; }
+  .tile { border: 1px solid var(--line); border-radius: 8px; padding: 10px; text-align: center; color: var(--muted); font-size: .85rem; }
+  .tile b { display: block; font-size: 1.6rem; color: var(--fg); }
+  .tile.crit b { color: var(--crit); } .tile.high b { color: var(--high); } .tile.med b { color: var(--med); }
+  .tile.low b { color: var(--low); } .tile.info b { color: var(--info); }
+  .sevbar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--line); }
+  .sevbar .crit { background: var(--crit); } .sevbar .high { background: var(--high); } .sevbar .med { background: var(--med); }
+  .sevbar .low { background: var(--low); } .sevbar .info { background: var(--info); }
+
+  /* current -> target */
+  .panel { margin: 0; border: 1px solid var(--line); border-radius: 8px; padding: 12px; min-height: 280px; overflow-x: auto; }
+  .panel figcaption { font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; margin-bottom: 8px; }
+  .mermaid { background: none; padding: 0; text-align: center; }
+  .adr { border-left: 3px solid var(--med); padding: 4px 12px; margin-top: 10px; }
+  .tree .add { color: var(--ok); font-weight: 600; } .tree .chg { color: var(--med); font-weight: 600; }
+  .tree .del { color: var(--info); text-decoration: line-through; } .tree .bad { color: var(--high); font-weight: 600; }
+  .tree .why { color: var(--muted); }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0; }
+  .box { border: 1px solid var(--fg); border-radius: 6px; padding: 4px 10px; }
+  .box.add { border-color: var(--ok); background: var(--ok-bg); } .box.chg { border-color: var(--med); background: var(--chg-bg); }
+  .box.bad { border-color: var(--high); background: var(--bad-bg); } .box.del { border: 1px dashed var(--info); color: var(--info); text-decoration: line-through; }
+  .box.deep { border: 3px solid var(--fg); padding: 10px 12px; }
+
+  /* tables */
+  .table-wrap { overflow-x: auto; margin: 12px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .bar { display: block; height: 4px; background: var(--accent); border-radius: 2px; margin-top: 4px; margin-left: auto; }
+  .sev { font-weight: 700; } .sev.crit { color: var(--crit); } .sev.high { color: var(--high); }
+  .sev.med { color: var(--med); } .sev.low { color: var(--low); } .sev.info { color: var(--info); }
+  .pass, .better { color: var(--ok); font-weight: 600; } .fail, .worse { color: var(--high); font-weight: 600; }
+  .finding { border-left: 3px solid var(--info); } .finding.crit { border-left-color: var(--crit); }
+  .finding.high { border-left-color: var(--high); } .finding.med { border-left-color: var(--med); } .finding.low { border-left-color: var(--low); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>{{Report title}}</h1>
+    <p class="meta">{{type}} · {{YYYY-MM-DD}} · slug <code>{{slug}}</code></p>
+    <p class="meta">Trace:
+      <a href="../plans/{{slug}}/scope.md">scope</a> ·
+      <a href="../research/{{slug}}.md">research</a> ·
+      <a href="../plans/{{slug}}/tasks.md">plan</a> ·
+      <a href="../plans/{{slug}}/progress.md">progress</a></p>
+    <p class="legend"><b>Legend</b> solid box = module · thick box = deep module · dashed = seam or removed ·
+      <span class="fail">red</span> = problem · <span class="pass">green</span> = added · <span class="sev med">amber</span> = changed</p>
+    <p class="headline">{{One or two sentences: what was asked, what was done, the headline result.}}</p>
+  </header>
+
+  <section id="summary">
+    <h2>1. Summary</h2>
+    <!-- refactor / feature / structure / test: 3-5 outcome numbers -->
+    <div class="tiles">
+      <div class="tile"><b>{{12}}</b>files changed</div>
+      <div class="tile"><b>{{+42}}</b>tests added</div>
+      <div class="tile"><b>{{86%}}</b>coverage</div>
+      <div class="tile"><b>{{−310}}</b>net lines</div>
+    </div>
+    <!-- audit / security: severity counts; bar widths = count / total as real percentages -->
+    <div class="tiles">
+      <div class="tile crit"><b>{{0}}</b>Critical</div>
+      <div class="tile high"><b>{{0}}</b>High</div>
+      <div class="tile med"><b>{{0}}</b>Medium</div>
+      <div class="tile low"><b>{{0}}</b>Low</div>
+      <div class="tile info"><b>{{0}}</b>Info</div>
+    </div>
+    <div class="sevbar"><i class="crit" style="width:10%"></i><i class="high" style="width:20%"></i><i class="med" style="width:30%"></i><i class="low" style="width:25%"></i><i class="info" style="width:15%"></i></div>
+  </section>
+
+  <section id="scope">
+    <h2>2. Scope and method</h2>
+    <div class="two">
+      <div class="card"><div class="label">Scope</div>
+        <dl><dt>In</dt><dd>{{…}}</dd><dt>Out</dt><dd>{{…}}</dd><dt>Depth</dt><dd>{{…}}</dd><dt>Constraints</dt><dd>{{…}}</dd></dl></div>
+      <div class="card"><div class="label">Method</div>
+        <dl><dt>Tools</dt><dd>{{ruff 0.6, mypy 1.11, pytest 8}}</dd><dt>Standards</dt><dd>{{coding-standards, OWASP Top 10:2025}}</dd></dl></div>
+    </div>
+  </section>
+
+  <!-- refactor / feature / structure / test: required. audit / security: delete (they change nothing). -->
+  <section id="current-target">
+    <h2>3. Current → Target</h2>
+
+    <!-- one block per change or candidate -->
+    <h3>{{Collapse the order intake pipeline}}</h3>
+    <div class="ct">
+      <figure class="panel"><figcaption>Current</figcaption>
+        <pre class="mermaid">
+flowchart TB
+  H[OrderRouter] --> V[OrderValidator] --> S[OrderService]
+  H -. leak .-> DB[(raw SQL in route)]
+  S -. leak .-> P[PricingClient]
+  classDef bad fill:#fef2f2,stroke:#dc2626,color:#991b1b
+  class DB,P bad
+        </pre></figure>
+      <figure class="panel"><figcaption>Target</figcaption>
+        <pre class="mermaid">
+flowchart TB
+  H[OrderRouter] --> S[OrderService]
+  S --> R[OrderRepository]
+  S --> PA[PricingPort]
+  classDef add fill:#ecfdf5,stroke:#059669,color:#065f46
+  classDef chg fill:#fffbeb,stroke:#d97706,color:#92400e
+  class R,PA add
+  class S chg
+        </pre></figure>
+    </div>
+    <div class="card">
+      <dl>
+        <dt>Problem</dt><dd>{{Order intake module is shallow: SQL and pricing leak across the seam.}}</dd>
+        <dt>Change</dt><dd>{{One service owns intake; repository and pricing port sit behind it.}}</dd>
+        <dt>Wins</dt><dd>{{locality: SQL in one module · tests hit one interface · delete 2 shallow wrappers}}</dd>
+      </dl>
+      <div class="adr">ADR: {{why pricing sits behind a port — two adapters, HTTP and in-memory.}}</div>
+    </div>
+
+    <!-- structure tasks: tree diff. Classes: add, chg, del, bad, why. -->
+    <h3>{{Folder structure}}</h3>
+    <div class="ct">
+      <figure class="panel"><figcaption>Current</figcaption>
+<pre class="tree">src/
+├── <span class="bad">routes.py</span>   <span class="why"># 900 lines, SQL in handlers</span>
+├── <span class="del">utils.py</span>    <span class="why"># grab bag</span>
+└── models.py</pre></figure>
+      <figure class="panel"><figcaption>Target</figcaption>
+<pre class="tree">src/
+├── <span class="add">orders/router.py</span>
+├── <span class="add">orders/service.py</span>
+├── <span class="add">orders/repository.py</span>
+└── <span class="chg">core/models.py</span>   <span class="why"># moved</span></pre></figure>
+    </div>
+
+    <h3>Metrics</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Metric</th><th>Before</th><th>After</th><th>Δ</th></tr></thead>
+        <tbody>
+          <!-- bar width = After / larger value, as a real percentage -->
+          <tr><td>{{Functions over complexity 10}}</td><td class="num">14</td><td class="num">3<span class="bar" style="width:21%"></span></td><td class="num better">−11</td></tr>
+          <tr><td>{{Coverage %}}</td><td class="num">61</td><td class="num">86<span class="bar" style="width:100%"></span></td><td class="num better">+25</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="findings">
+    <h2>4. {{Changes | Findings}}</h2>
+    <!-- refactor: changes table. feature: what was built, interface, tests added. -->
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Change</th><th>Named refactoring</th><th>Files</th><th>Smell addressed</th></tr></thead>
+        <tbody><tr><td>{{Move SQL out of router}}</td><td>{{Move Function}}</td><td><code>{{src/orders/router.py}}</code></td><td>{{Feature envy}}</td></tr></tbody>
+      </table>
+    </div>
+
+    <!-- audit / security: findings table plus one card per finding. -->
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>ID</th><th>Severity</th><th>Category</th><th>Standard</th><th>Location</th><th>Summary</th><th>Status</th></tr></thead>
+        <tbody><tr><td><a href="#F-001">F-001</a></td><td class="sev high">High</td><td>{{Injection}}</td><td>{{A05:2025 · CWE-89}}</td><td><code>{{src/x.py:42}}</code></td><td>{{one line}}</td><td class="fail">open</td></tr></tbody>
+      </table>
+    </div>
+    <article class="card finding high" id="F-001">
+      <h3>F-001 — {{title}}</h3>
+      <p class="meta"><span class="sev high">High</span> · {{A05:2025}} · {{CWE-89}} · {{ASVS V1.2.4}} · <code>{{src/x.py:42}}</code></p>
+      <p class="label">Evidence</p>
+      <pre>{{minimal code excerpt, HTML-escaped}}</pre>
+      <!-- security High/Critical: source → sink, plain boxes only -->
+      <div class="row"><span class="box">{{query param id}}</span> → <span class="box">{{get_invoice()}}</span> → <span class="fail">no owner check</span> → <span class="box bad">{{SELECT … WHERE id = ?}}</span></div>
+      <dl><dt>Impact</dt><dd>{{…}}</dd><dt>Fix</dt><dd>{{…}}</dd></dl>
+    </article>
+  </section>
+
+  <!-- feature / change only: converge table (core-be-converge). Else delete. -->
+  <section id="spec-vs-code">
+    <h2>4b. Spec vs code (part of Changes)</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>AC</th><th>Test</th><th>Code</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td>{{AC-1}}</td><td><code>{{tests/test_export.py::test_csv_header}}</code></td><td><code>{{app/export/service.py:42}}</code></td><td class="pass">{{met}}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="verification">
+    <h2>5. Verification</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Check</th><th>Command</th><th>Before</th><th>After</th></tr></thead>
+        <tbody>
+          <tr><td>{{Tests}}</td><td><code>{{uv run pytest}}</code></td><td>{{212 passed}}</td><td class="pass">{{254 passed}}</td></tr>
+          <tr><td>{{Types}}</td><td><code>{{uv run mypy src}}</code></td><td class="fail">{{9 errors}}</td><td class="pass">{{0 errors}}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- omit for audit / security -->
+  <section id="docs">
+    <h2>6. Docs updated</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>File</th><th>Section</th><th>Change</th></tr></thead>
+        <tbody><tr><td><code>README.md</code></td><td>{{Environment, Endpoints}}</td><td>{{added PAYMENTS_API_URL; POST /refunds}}</td></tr>
+          <tr><td><code>AGENTS.md</code></td><td>{{core-be block}}</td><td>{{refreshed to current pack}}</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="next">
+    <h2>7. Out-of-scope observations and next tasks</h2>
+    <ul>
+      <li><b>{{refactor-code}}:</b> {{split src/billing/invoice.py into service and repository}}</li>
+      <li><b>{{observation}}:</b> {{retry loop in src/sync.py never backs off}}</li>
+    </ul>
+  </section>
+</main>
+</body>
+</html>

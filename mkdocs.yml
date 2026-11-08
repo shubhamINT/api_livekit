@@ -144,6 +144,11 @@ nav:
       - Get Audio Details: api/audio/get.md
       - Delete Audio: api/audio/delete.md
 
+    - Standalone Speech & LLM:
+      - Speech to Text: api/stt.md
+      - Text to Speech: api/tts.md
+      - Large Language Model: api/llm.md
+
     - Tools:
       - Overview: api/tools/index.md
       - Create Tool: api/tools/create.md

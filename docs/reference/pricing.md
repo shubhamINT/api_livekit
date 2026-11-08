@@ -1,7 +1,7 @@
 # Pricing
 
-The rates behind `estimated_cost_usd` on every usage record. They are public pay-as-you-go list
-prices, kept as a static table in the platform, so a stored estimate can always be
+The rates behind `estimated_cost_usd` on every usage record and standalone endpoint response (`/stt/transcribe`, `/tts/synthesize`, `/llm/chat`). They are public pay-as-you-go list
+prices, kept as a static table in the platform, so an estimate can always be
 reproduced. They are estimates, not your invoice: a contract rate, a promotion or a tax changes
 what you actually pay. How the estimate is built: [Usage Accounting](usage-accounting.md).
 

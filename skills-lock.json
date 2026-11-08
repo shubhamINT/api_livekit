@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "skills": {
+    "core-be-add-health-endpoint": {
+      "source": "shubhamINT/agent_rules",
+      "sourceType": "github",
+      "skillPath": "core-backend/.agents/skills/core-be-add-health-endpoint/SKILL.md",
+      "computedHash": "0d92b1c4c48c5dc8a97d9d8677b6f796af0b34dc5d54699e8096c3331be84719"
+    },
+    "core-be-analyze": {
+      "source": "shubhamINT/agent_rules",
+      "sourceType": "github",
+      "skillPath": "core-backend/.agents/skills/core-be-analyze/SKILL.md",
+      "computedHash": "20f5b0c627ab4f4a4b38448268f665d55f0e1fbdcbaa5707ba4c906594d7a1d8"
+    },
+    "core-be-assess": {
+      "source": "shubhamINT/agent_rules",
+      "sourceType": "github",
+      "skillPath": "core-backend/.agents/skills/core-be-assess/SKILL.md",
+      "computedHash": "55b2bf220dc23e9e3e07c7f62c75125476869748a71f67a3ad292337e713bf8b"
+    },
+    "core-be-audit-code": {
+      "source": "shubhamINT/agent_rules",
+      "sourceType": "github",
+      "skillPath": "core-backend/.agents/skills/core-be-audit-code/SKILL.md",
+      "computedHash": "ec5cd59518fcc03a7c54ffe06306b0cd322070b056d0d042b45ebca025e0456a"
+    },
+    "core-be-audit-security": {
+      "source": "shubhamINT/agent_rules",
+      "sourceType": "github",
+      "skillPath": "core-backend/.agents/skills/core-be-audit-security/SKILL.md",
+      "computedHash": "ee07d4f9c84f58cbe63a64789872e94bf1e6eea8fd64e6390b9dad6880b72b69"
+    },
+    "core-be-build-feature": {
+      "source": "shubhamINT/agent_rules",
+      "sourceType": "github",
+      "skillPath": "core-backend/.agents/skills/core-be-build-feature/SKILL.md",
+      "computedHash": "5ab4c8ce63af7b2818af1af2db3a962e0c03bc8f92b2fb83c7c0387d5ee910fc"
+    },
+    "core-be-change": {
+      "source": "shubhamINT/agent_rules",
+      "sourceType": "github",
+      "skillPath": "core-backend/.agents/skills/core-be-change/SKILL.md",
+      "computedHash": "b6e1cb67d30128ce6f97b8c14dd453cadbe768be3a86d9ef2ce5499b287afe5e"
+    },
+    "core-be-clarify": {
+      "source": "shubhamINT/agent_rules",
+      "sourceType": "github",
+      "skillPath": "core-backend/.agents/skills/core-be-clarify/SKILL.md",
+      "computedHash": "642373ad0ed6f69a632c15f5fbd4d85b994b7da31565023f295f8e4c8890a2b1"
+    },
+    "core-be-coding-standards": {
+      "source": "shubhamINT/agent_rules",
+      "sourceType": "github",
+      "skillPath": "core-backend/.agents/skills/core-be-coding-standards/SKILL.md",
+      "computedHash": "4fa82e066551c158a6ed810597cf61d88a205122866519307b9830a2fbf43ec4"
+    },
+    "core-be-constitution": {
+      "source": "shubhamINT/agent_rules",
+      "sourceType": "github",
+      "skillPath": "core-backend/.agents/skills/core-be-constitution/SKILL.md",
+      "computedHash": "fd8a145d844a2fe0ff360be391bbffe55c8975351133f451a623955ee22472dc"
+    },
+    "core-be-converge": {
+      "source": "shubhamINT/agent_rules",
+      "sourceType": "github",
+      "skillPath": "core-backend/.agents/skills/core-be-converge/SKILL.md",
+      "computedHash": "afa7d4834b5eaf27aff809c4f5a9835e2f791dd7971580cc268e97043d38aab3"
+    },
+    "core-be-debug": {
+      "source": "shubhamINT/agent_rules",
+      "sourceType": "github",
+      "skillPath": "core-backend/.agents/skills/core-be-debug/SKILL.md",
+      "computedHash": "389b4d052cfe5d1c2c19b07effbd4b0190e801533931d728be4300f10d56b2c0"
+    },
+    "core-be-explain": {
+      "source": "shubhamINT/agent_rules",
+      "sourceType": "github",
+      "skillPath": "core-backend/.agents/skills/core-be-explain/SKILL.md",
+      "computedHash": "13a08e4fdca29a9258050dd53aa8ffce90705b708a0472e1f710c6e4d571cc89"
+    },
+    "core-be-implement": {
+      "source": "shubhamINT/agent_rules",
+      "sourceType": "github",
+      "skillPath": "core-backend/.agents/skills/core-be-implement/SKILL.md",
+      "computedHash": "935509b40161e79ed0cd48b707b0511df69a0857ef19b00395b786b9d4b2c5a7"
+    },
+    "core-be-init": {
+      "source": "shubhamINT/agent_rules",
+      "sourceType": "github",
+      "skillPath": "core-backend/.agents/skills/core-be-init/SKILL.md",
+      "computedHash": "04bab87072399e798a2fb898cf3c5430124f00bc4556579f1c9f8a32e1d4dcac"
+    },
+    "core-be-plan": {
+      "source": "shubhamINT/agent_rules",
+      "sourceType": "github",
+      "skillPath": "core-backend/.agents/skills/core-be-plan/SKILL.md",
+      "computedHash": "24d9a7e3a44e8cfab4403bcfe3f03bcfc2c47a5cafb0f410ed43a2fe899c41a5"
+    },
+    "core-be-refactor-code": {
+      "source": "shubhamINT/agent_rules",
+      "sourceType": "github",
+      "skillPath": "core-backend/.agents/skills/core-be-refactor-code/SKILL.md",
+      "computedHash": "4f4ebf7b96b04d875f0a1c06fa0938bd28f3880be872d39437967fed3f610edc"
+    },
+    "core-be-specify": {
+      "source": "shubhamINT/agent_rules",
+      "sourceType": "github",
+      "skillPath": "core-backend/.agents/skills/core-be-specify/SKILL.md",
+      "computedHash": "f5ca39de244ac0b9f5285cefa16f41e2cd18005193654bc0c37e2c3adc7dbf1b"
+    },
+    "core-be-structure-service": {
+      "source": "shubhamINT/agent_rules",
+      "sourceType": "github",
+      "skillPath": "core-backend/.agents/skills/core-be-structure-service/SKILL.md",
+      "computedHash": "8e808857c86953045c4f69afa31bba7c05f13ef95d9d54af33763a0a6ba55525"
+    },
+    "core-be-tasks": {
+      "source": "shubhamINT/agent_rules",
+      "sourceType": "github",
+      "skillPath": "core-backend/.agents/skills/core-be-tasks/SKILL.md",
+      "computedHash": "f73379994fe56d515e30c34ca68d536bdecdb2f89ca28364453a3044318f42e0"
+    },
+    "core-be-workflow": {
+      "source": "shubhamINT/agent_rules",
+      "sourceType": "github",
+      "skillPath": "core-backend/.agents/skills/core-be-workflow/SKILL.md",
+      "computedHash": "14e8d6cd87de7d0e57703754c64d90bb87588474857e4b107b42ca5a45cda81f"
+    },
+    "core-be-write-tests": {
+      "source": "shubhamINT/agent_rules",
+      "sourceType": "github",
+      "skillPath": "core-backend/.agents/skills/core-be-write-tests/SKILL.md",
+      "computedHash": "ea0378db786cb817941fc2d1585d30abf9f51a4a53526d678c0ec26cc7602bd2"
+    }
+  }
+}
