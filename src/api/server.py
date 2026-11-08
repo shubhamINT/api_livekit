@@ -22,6 +22,9 @@ from src.api.routes import (
     inbound_context_strategy,
     analytics,
     admin,
+    stt,
+    tts,
+    llm,
 )
 from starlette.routing import Route
 from src.api.mcp_docs import asgi_app as docs_mcp_asgi, mcp as docs_mcp
@@ -176,6 +179,9 @@ app.include_router(
 )
 app.include_router(analytics.router, prefix="/analytics", tags=["Analytics"])
 app.include_router(admin.router, prefix="/admin", tags=["Admin"])
+app.include_router(stt.router, prefix="/stt", tags=["Speech to Text"])
+app.include_router(tts.router, prefix="/tts", tags=["Text to Speech"])
+app.include_router(llm.router, prefix="/llm", tags=["Large Language Model"])
 
 # Serve MkDocs documentation site
 site_dir = Path(__file__).resolve().parents[2] / "site"

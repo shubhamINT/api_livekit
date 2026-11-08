@@ -234,6 +234,9 @@ whose user has `is_super_admin`. Payloads and examples for each route are in [`d
 | `/inbound` | Map inbound numbers to assistants (Exotel) | [inbound](docs/api/inbound/index.md) |
 | `/inbound_context_strategy` | Webhook that supplies caller context on inbound calls | [strategy](docs/api/inbound-context-strategy/index.md) |
 | `/logs` | Activity log: tool calls, context lookups, webhook deliveries | [activity logs](docs/api/activity-logs.md) |
+| `/stt` | Speech to text transcription (`POST /stt/transcribe`) | [speech to text](docs/api/stt.md) |
+| `/tts` | Text to speech synthesis (`POST /tts/synthesize`) | [text to speech](docs/api/tts.md) |
+| `/llm` | Chat completion & SSE streaming (`POST /llm/chat`) | [LLM](docs/api/llm.md) |
 | `/analytics`, `/admin/analytics` | Call and token analytics; cross-tenant for super admins | [analytics](docs/api/analytics/index.md) |
 | `/documentation`, `/mcp` | No auth. The docs site, and the same docs as an MCP server for AI agents | [MCP](docs/api/mcp.md) |
 

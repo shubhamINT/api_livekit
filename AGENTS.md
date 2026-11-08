@@ -192,6 +192,7 @@ REST routes require `Authorization: Bearer <api_key>` (keys are `lvk_`-prefixed,
 | MongoDB schemas (Beanie ODM) | `src/core/db/db_schemas.py` |
 | Settings / env config | `src/core/config.py` |
 | API routes | `src/api/routes/` |
+| Standalone STT/TTS/LLM service clients | `src/services/{stt,tts,llm}/client.py` |
 | MCP docs server (`/mcp`) | `src/api/mcp_docs.py` |
 
 ### Assistant modes
