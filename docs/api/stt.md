@@ -8,6 +8,7 @@ Transcribes an audio file into text using direct provider parameters or inherite
 POST /stt/transcribe
 Content-Type: multipart/form-data
 Authorization: Bearer <api_key>
+X-Provider-API-Key: <provider_api_key>   # optional
 ```
 
 ## Form Parameters

@@ -149,3 +149,15 @@ No new MongoDB collection required (Principle 2: Simplicity).
 |------|--------|-----------|
 | 2026-11-08 | Created | AC-1 through AC-11 |
 
+
+## Change log (delta) — 2026-11-08
+
+- Provider API key placement changed from request body/form field to `X-Provider-API-Key` HTTP header. AC-10 related.
+
+## Delta — Provider API key placement
+
+- Read via FastAPI `Header(default=None, alias="X-Provider-API-Key")` on `/stt/transcribe`, `/tts/synthesize`, `/llm/chat`.
+- Thread as `explicit_api_key` into `resolve_stage_config` (already supported).
+- Remove `api_key` from `SynthesizeRequest`, `ChatCompletionRequest`, and STT form params.
+- Precedence: header > assistant stored key > system env default.
+- Validation: reject masked (`****`) and empty/whitespace with 422.

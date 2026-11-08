@@ -1,8 +1,9 @@
+from typing import Optional
 import base64
 import io
 import uuid
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 
 from src.api.dependencies import get_current_user
 from src.api.models.api_schemas.standalone import SynthesizeRequest
@@ -25,6 +26,7 @@ router = APIRouter()
 async def synthesize(
     request: SynthesizeRequest,
     current_user: APIKey = Depends(get_current_user),
+    x_provider_api_key: Optional[str] = Header(None, alias="X-Provider-API-Key"),
 ):
     """Synthesize text into speech audio using direct provider REST clients or assistant defaults."""
     stage_config = await resolve_stage_config(
@@ -35,6 +37,7 @@ async def synthesize(
         explicit_model=request.model,
         explicit_voice=request.voice,
         explicit_language=request.language,
+        explicit_api_key=x_provider_api_key,
     )
 
     try:

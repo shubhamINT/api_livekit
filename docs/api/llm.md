@@ -8,6 +8,7 @@ Executes conversational completions using configured OpenAI or Gemini models, su
 POST /llm/chat
 Content-Type: application/json
 Authorization: Bearer <api_key>
+X-Provider-API-Key: <provider_api_key>   # optional
 ```
 
 ## Request Payload

@@ -1,6 +1,6 @@
 from typing import Optional
 import httpx
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Header
 
 from src.api.dependencies import get_current_user
 from src.api.models.response_models import apiResponse
@@ -25,6 +25,7 @@ async def transcribe(
     model: Optional[str] = Form(None, description="STT model identifier"),
     language: Optional[str] = Form(None, description="Language code (e.g. en-US, hi-IN, or auto)"),
     current_user: APIKey = Depends(get_current_user),
+    x_provider_api_key: Optional[str] = Header(None, alias="X-Provider-API-Key"),
 ):
     """Transcribe an audio file into text using the specified or assistant-configured STT model."""
     # Bounded read to avoid memory exhaustion
@@ -44,6 +45,7 @@ async def transcribe(
         explicit_provider=provider,
         explicit_model=model,
         explicit_language=language,
+        explicit_api_key=x_provider_api_key,
     )
 
     try:
