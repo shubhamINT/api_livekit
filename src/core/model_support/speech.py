@@ -500,6 +500,13 @@ STT_MODELS_BY_PROVIDER = {
     "openai": OPENAI_STT_MODELS,
 }
 
+# Cartesia and Mistral pin their model in the factory (sonic-3 and mistral-tts-1
+# respectively) — there is no model field on their TTS config. The standalone
+# endpoints still accept a `model` override for symmetry, but only the pinned id
+# is legal; anything else is rejected before it reaches the vendor.
+CARTESIA_TTS_MODEL = "sonic-3"
+MISTRAL_TTS_MODEL = "mistral-tts-1"
+
 TTS_MODELS_BY_PROVIDER = {
     "elevenlabs": ELEVENLABS_TTS_MODELS,
 }

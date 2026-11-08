@@ -156,15 +156,26 @@ async def resolve_stage_config(
                     raise HTTPException(status_code=422, detail=reason)
         elif provider == "elevenlabs":
             model = model or "eleven_multilingual_v2"
-            eleven_models = speech.TTS_MODELS_BY_PROVIDER.get("elevenlabs", set())
+            eleven_models = speech.ELEVENLABS_TTS_MODELS
             if model not in eleven_models:
                 raise HTTPException(
                     status_code=422,
                     detail=f"Model '{model}' is not a valid ElevenLabs TTS model",
                 )
         elif provider == "cartesia":
-            model = model or "sonic-3"
-
+            model = model or speech.CARTESIA_TTS_MODEL
+            if model != speech.CARTESIA_TTS_MODEL:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Model '{model}' is not a valid cartesia TTS model — only '{speech.CARTESIA_TTS_MODEL}' is supported",
+                )
+        elif provider == "mistral":
+            model = model or speech.MISTRAL_TTS_MODEL
+            if model != speech.MISTRAL_TTS_MODEL:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Model '{model}' is not a valid mistral TTS model — only '{speech.MISTRAL_TTS_MODEL}' is supported",
+                )
     elif stage == "llm":
         if assistant and not provider:
             llm_conf = assistant.assistant_llm_config or {}
@@ -176,8 +187,20 @@ async def resolve_stage_config(
             raise HTTPException(status_code=422, detail=f"Unsupported LLM provider: '{provider}'")
         if provider == "openai":
             model = model or "gpt-5.4"
+            # Validate the model against the platform's sanctioned OpenAI model set.
+            # capabilities.CASCADE_MODELS is the sanctioned set (reasoning + chat).
+            if model not in capabilities.CASCADE_MODELS:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"Model '{model}' is not a valid OpenAI model for this endpoint — "
+                        f"choose one of: {', '.join(sorted(capabilities.CASCADE_MODELS))}"
+                    ),
+                )
         elif provider == "gemini":
             model = model or "gemini-2.5-flash"
+            if not model or not isinstance(model, str) or not model.strip():
+                raise HTTPException(status_code=422, detail="Model must be a non-empty string")
 
     return {
         "provider": provider,

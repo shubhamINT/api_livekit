@@ -21,6 +21,7 @@ Approved tasks: `agent-tracking/plans/2026-11-08-feature-standalone-voice-endpoi
 - Step 13: Mounted `/stt`, `/tts`, and `/llm` routers in `src/api/server.py`.
 - Step 14: Added user-facing documentation in `docs/api/stt.md`, `docs/api/tts.md`, `docs/api/llm.md`, updated `mkdocs.yml` nav, and updated `README.md`. Strict MkDocs build clean (`0` errors, `39` diagrams valid).
 - Step 15: Executed test suite (`.venv/bin/python -m unittest discover -s tests`) -> 715 tests OK.
+- Step 16: Hardened standalone validation (AC-10) so users cannot pass arbitrary model ids: STT models already validated against `speech.STT_MODELS_BY_PROVIDER`; TTS now validates Sarvam, ElevenLabs, Cartesia (pinned `sonic-3`) and Mistral (pinned `mistral-tts-1`) and Sarvam speakers; LLM now validates OpenAI models against `capabilities.CASCADE_MODELS`. All 724 tests green.
 
 ## Converge
 
@@ -37,7 +38,7 @@ Command: `.venv/bin/python -m unittest tests/test_standalone_voice_endpoints.py 
 | AC-7 | `tests/test_standalone_voice_endpoints.py::TestStandaloneVoiceRoutes::test_llm_chat_stream_success` | `src/api/routes/llm.py:30`, `src/services/llm/client.py:91` | met |
 | AC-8 | `tests/test_standalone_voice_endpoints.py::TestStandaloneVoiceRoutes::test_assistant_inheritance_and_override` | `src/api/routes/standalone_helper.py:10` | met |
 | AC-9 | `tests/test_standalone_voice_endpoints.py::TestStandaloneVoiceRoutes::test_unowned_assistant_returns_404` | `src/api/routes/standalone_helper.py:27` | met |
-| AC-10 | `tests/test_standalone_voice_endpoints.py::TestStandaloneVoiceRoutes::test_invalid_provider_returns_422` | `src/api/routes/standalone_helper.py:53,74,96` | met |
+| AC-10 | `tests/test_standalone_voice_endpoints.py::TestStandaloneVoiceRoutes::test_invalid_provider_returns_422` | `src/api/routes/standalone_helper.py:123-131,143-178,186-203` | met |
 | AC-11 | `tests/test_standalone_voice_endpoints.py::TestStandaloneVoiceRoutes::test_log_standalone_usage` | `src/api/routes/standalone_helper.py:110` | met |
 
 Verdict: Converged
