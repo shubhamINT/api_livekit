@@ -1,0 +1,137 @@
+<!doctype html>
+<!--
+  Explain page template. Patterns and look: ../references/VISUAL-REPORT.md
+  Save to agent-tracking/reports/<slug>.html.
+
+  HOW TO FILL
+  - Replace every {{placeholder}} in text. Never put {{placeholders}} inside a
+    style="" attribute or a Mermaid block: write real names there.
+  - Delete a section that does not apply to the agreed depth, then renumber.
+  - Every claim about behaviour ends with a file:line you read in this task.
+    Mark anything you did not read "unverified" and anything you deduced "inferred".
+  - Names of env vars and keys only, never their values.
+
+  SCRIPT POLICY
+  - The Mermaid import below is the only external script allowed. The page holds
+    no secrets, credentials, internal hostnames, or security findings.
+  - Offline, the diagram source stays visible in its <pre>, so nothing is lost.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{Subject}} explained — {{slug}}</title>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral" });
+  // Render one by one with fixed ids: auto-generated ids can collide and put a diagram in the wrong panel.
+  for (const [i, el] of document.querySelectorAll("pre.mermaid").entries()) {
+    const { svg } = await mermaid.render(`mmd-${i}`, el.textContent);
+    el.innerHTML = svg;
+  }
+</script>
+<style>
+  :root { --fg: #1f2937; --muted: #6b7280; --line: #e5e7eb; --soft: #f9fafb; --accent: #4f46e5; --med: #d97706; --ok: #059669; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #fff; color: var(--fg); font: 15px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 40px 16px 64px; }
+  h1 { font-size: 1.75rem; margin: 0 0 6px; }
+  h2 { font-size: 1.2rem; margin: 40px 0 12px; padding-bottom: 6px; border-bottom: 2px solid var(--accent); }
+  h3 { font-size: 1rem; margin: 24px 0 8px; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 16px; }
+  .meta { color: var(--muted); font-size: .88rem; margin: 2px 0; }
+  .headline { font-size: 1.05rem; margin: 14px 0 0; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .85rem; }
+  code { background: var(--soft); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--soft); padding: 12px; border-radius: 6px; overflow-x: auto; margin: 0; }
+  .mermaid { background: none; padding: 0; text-align: center; }
+  .card { border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; margin: 12px 0; }
+  .note { border-left: 3px solid var(--med); padding: 4px 12px; margin: 12px 0; }
+  .ref { color: var(--muted); font-size: .85rem; }
+  .tag { font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+  ol.walk { padding-left: 1.4rem; } ol.walk li { margin: 10px 0; }
+  .table-wrap { overflow-x: auto; margin: 12px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
+  details { margin: 8px 0; } summary { cursor: pointer; color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>{{Subject}} explained</h1>
+    <p class="meta">explain · {{YYYY-MM-DD}} · slug <code>{{slug}}</code> · code at commit <code>{{short sha}}</code> · for {{reader}} · depth {{overview|flow|deep}}</p>
+    <p class="meta">Trace: <a href="../plans/{{slug}}/scope.md">scope</a></p>
+    <p class="headline">{{Two sentences: what this is and the one thing a reader must remember.}}</p>
+  </header>
+
+  <section id="map">
+    <h2>1. Where it lives</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Piece</th><th>Role</th><th>Where</th></tr></thead>
+      <tbody>
+        <tr><td>{{entry point}}</td><td>{{what starts it}}</td><td><code>{{path:line}}</code></td></tr>
+        <tr><td>{{module}}</td><td>{{one-line role}}</td><td><code>{{path:line}}</code></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section id="flow">
+    <h2>2. How it flows</h2>
+    <!-- One diagram that matches the code hop by hop. Backend: sequence diagram of the request or job. Frontend: flowchart of route -> components -> data -> render. -->
+    <pre class="mermaid">sequenceDiagram
+  participant Caller
+  participant Entry as Entry point
+  participant Core as Core logic
+  Caller->>Entry: request
+  Entry->>Core: validated input
+  Core-->>Entry: result
+  Entry-->>Caller: response</pre>
+    <ol class="walk">
+      <li><b>{{Step}}</b>: {{what happens and why}} <span class="ref"><code>{{path:line}}</code></span></li>
+      <li><b>{{Step}}</b>: {{what happens and why}} <span class="ref"><code>{{path:line}}</code></span></li>
+    </ol>
+  </section>
+
+  <section id="data">
+    <h2>3. Data and state</h2>
+    <!-- Shapes that cross a boundary, where state lives, who may change it. Short excerpts only, in <details>. -->
+    <p>{{What is stored or held, where, and what keeps it consistent.}} <span class="ref"><code>{{path:line}}</code></span></p>
+    <details><summary>Shape: {{name}}</summary><pre>{{short excerpt, no secrets}}</pre></details>
+  </section>
+
+  <section id="why">
+    <h2>4. Why it is built this way</h2>
+    <p>{{The design choice, the reason, what it costs.}} <span class="ref"><code>{{path:line}}</code></span> <span class="tag">inferred</span></p>
+  </section>
+
+  <section id="edges">
+    <h2>5. Edge cases and failure modes</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>When</th><th>What happens</th><th>Where</th></tr></thead>
+      <tbody><tr><td>{{condition}}</td><td>{{behaviour}}</td><td><code>{{path:line}}</code></td></tr></tbody>
+    </table></div>
+  </section>
+
+  <section id="change">
+    <h2>6. Changing it safely</h2>
+    <ul>
+      <li>Touch points: {{files that change together}}.</li>
+      <li>Tests that guard it: {{test files}}. Not covered: {{gaps}}.</li>
+      <li>Spec: {{specs/NNN-topic/spec.md, and where code and spec disagree; or "none exists"}}.</li>
+    </ul>
+  </section>
+
+  <section id="terms">
+    <h2>7. Terms</h2>
+    <dl><dt>{{term}}</dt><dd>{{meaning in this codebase}}</dd></dl>
+  </section>
+
+  <section id="open">
+    <h2>8. Unverified and observations</h2>
+    <div class="note">{{What was not read or could not be traced, and why. Problems noticed but not fixed, with the task type that would handle each (audit, debug, change).}}</div>
+  </section>
+</main>
+</body>
+</html>

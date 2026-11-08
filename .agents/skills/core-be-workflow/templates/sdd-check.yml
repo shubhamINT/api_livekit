@@ -1,0 +1,14 @@
+# Sample GitHub Actions job: fails the build when specs, plans, or task records
+# break the spec-driven rules. Copy to .github/workflows/sdd-check.yml.
+# Needs the skills in the repo (npx skills or manual copy). A plugin install keeps
+# them outside the repo; copy core-be-workflow/scripts/ into the repo first.
+name: sdd-check
+on: [push, pull_request]
+jobs:
+  sdd:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          dir=$(ls -d .claude/skills/core-be-workflow .agents/skills/core-be-workflow 2>/dev/null | head -1)
+          sh "$dir/scripts/sdd-check.sh" ci
