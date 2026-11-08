@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from src.core.db.db_schemas import APIKey, Assistant, UsageRecord
 from src.core.logger import logger
 from src.core.model_support import capabilities, speech
+from src.core.providers.keys import reject_masked_key
 from src.core.pricing.calculator import price_model_usage
 
 
@@ -83,6 +84,7 @@ async def resolve_stage_config(
     explicit_model: Optional[str] = None,
     explicit_voice: Optional[str] = None,
     explicit_language: Optional[str] = None,
+    explicit_api_key: Optional[str] = None,
 ) -> dict[str, Any]:
     """Resolve stage configuration from assistant inheritance and explicit overrides."""
     assistant: Optional[Assistant] = None
@@ -201,6 +203,17 @@ async def resolve_stage_config(
             model = model or "gemini-2.5-flash"
             if not model or not isinstance(model, str) or not model.strip():
                 raise HTTPException(status_code=422, detail="Model must be a non-empty string")
+
+    # An explicit provider key from the request takes precedence over anything
+    # inherited from an assistant or the system default. (Non-str values, such as
+    # FastAPI Form defaults passed through direct calls, are ignored.)
+    if isinstance(explicit_api_key, str):
+        if not explicit_api_key.strip():
+            raise HTTPException(status_code=422, detail="api_key must be a non-empty string")
+        try:
+            api_key = reject_masked_key(explicit_api_key)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
 
     return {
         "provider": provider,

@@ -1,5 +1,7 @@
+from typing import Optional
+
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
 from src.api.dependencies import get_current_user
@@ -17,6 +19,7 @@ router = APIRouter()
 async def chat(
     request: ChatCompletionRequest,
     current_user: APIKey = Depends(get_current_user),
+    x_provider_api_key: Optional[str] = Header(None, alias="X-Provider-API-Key"),
 ):
     """Execute conversational chat completions using OpenAI or Gemini."""
     stage_config = await resolve_stage_config(
@@ -25,6 +28,7 @@ async def chat(
         assistant_id=request.assistant_id,
         explicit_provider=request.provider,
         explicit_model=request.model,
+        explicit_api_key=x_provider_api_key,
     )
 
     messages_payload = [{"role": m.role, "content": m.content} for m in request.messages]

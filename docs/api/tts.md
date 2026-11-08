@@ -8,6 +8,7 @@ Synthesizes input text into speech audio and streams binary audio or returns bas
 POST /tts/synthesize
 Content-Type: application/json
 Authorization: Bearer <api_key>
+X-Provider-API-Key: <provider_api_key>   # optional
 ```
 
 ## Request Payload
